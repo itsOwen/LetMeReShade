@@ -105,7 +105,7 @@ This project is licensed under the BSD-3-Clause License - see the [LICENSE](LICE
 
 ## 🙏 Acknowledgments
 
-- ZigmA (for giving me the idea to build the plugin and help in testing.)
+- ZigmA (for giving me the idea to build the plugin and helping me testing it.)
 - xXJSONDeruloXx (for his brilliant plugin Decky Framegen, which is used as base for this plugin.)
 
 ## 📞 Support

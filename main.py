@@ -16,7 +16,6 @@ class Plugin:
             'FORCE_RESHADE_UPDATE_CHECK': '0',
             'RESHADE_ADDON_SUPPORT': '0'
         }
-        # Ensure the main path exists
         self.main_path = os.path.join(self.environment['XDG_DATA_HOME'], 'reshade')
         os.makedirs(self.main_path, exist_ok=True)
 
@@ -31,7 +30,8 @@ class Plugin:
 
     async def check_reshade_path(self) -> dict:
         path = Path(os.path.expanduser("~/.local/share/reshade"))
-        return {"exists": path.exists()}
+        marker_file = path / ".installed"
+        return {"exists": marker_file.exists()}
 
     def _find_game_path(self, appid: str) -> str:
         steam_root = Path(decky.HOME) / ".steam" / "steam"
@@ -61,18 +61,15 @@ class Plugin:
                             game_words = set(word.strip() for word in game_name.split())
 
                             def score_executable(exe_path: Path) -> float:
-                                """Score an executable based on various factors to determine if it's likely the main game exe"""
                                 if not exe_path.is_file():
                                     return 0
                                     
                                 name = exe_path.stem.lower()
                                 score = 0
 
-                                # Skip utility executables
                                 if any(skip in name for skip in ["unins", "launcher", "crash", "setup", "config", "redist"]):
                                     return 0
 
-                                # Analyze file size - main game executables tend to be larger
                                 try:
                                     size = exe_path.stat().st_size
                                     if size > 1024 * 1024 * 10:  # Larger than 10MB
@@ -82,7 +79,6 @@ class Plugin:
                                 except:
                                     pass
 
-                                # Check if exe name contains words from the game directory name
                                 name_words = set(word.strip() for word in name.split())
                                 matching_words = game_words.intersection(name_words)
                                 score += len(matching_words) * 2
@@ -90,7 +86,6 @@ class Plugin:
                                 return score
 
                             def find_best_exe(path: Path, max_depth=4) -> tuple[Path, float]:
-                                """Recursively find the executable with the highest score"""
                                 if not path.exists() or not path.is_dir():
                                     return None, 0
 
@@ -98,14 +93,12 @@ class Plugin:
                                 best_score = -1
 
                                 try:
-                                    # First check current directory
                                     for exe in path.glob("*.exe"):
                                         score = score_executable(exe)
                                         if score > best_score:
                                             best_score = score
                                             best_exe = exe.parent
 
-                                    # Then recurse into subdirectories if we haven't found a good match
                                     if best_score < 3 and max_depth > 0:
                                         for subdir in path.iterdir():
                                             if subdir.is_dir():
@@ -119,15 +112,12 @@ class Plugin:
 
                                 return best_exe, best_score
 
-                            # Find the best executable
                             best_path, score = find_best_exe(base_path)
                             
-                            # If we found a good match, use that directory
                             if best_path and score > 0:
                                 decky.logger.info(f"Found game executable directory: {best_path} (score: {score})")
                                 return str(best_path)
                             
-                            # Fallback to base path if no good match found
                             decky.logger.info(f"No suitable executable found, using base path: {base_path}")
                             return str(base_path)
 
@@ -142,14 +132,10 @@ class Plugin:
                 decky.logger.error(f"Install script not found: {script_path}")
                 return {"status": "error", "message": "Install script not found"}
 
-            env = os.environ.copy()
-            env.update(self.environment)
-            env['LD_LIBRARY_PATH'] = '/usr/lib'
-            
             process = subprocess.run(
                 ["/bin/bash", str(script_path)],
                 cwd=str(assets_dir),
-                env=env,
+                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib'},
                 capture_output=True,
                 text=True,
                 timeout=300
@@ -161,6 +147,10 @@ class Plugin:
 
             if process.returncode != 0:
                 return {"status": "error", "message": process.stderr}
+
+            # Create installation marker
+            marker_file = Path(self.main_path) / ".installed"
+            marker_file.touch()
 
             return {"status": "success", "output": "ReShade installed successfully!"}
         except Exception as e:
@@ -175,20 +165,21 @@ class Plugin:
             if not script_path.exists():
                 return {"status": "error", "message": "Uninstall script not found"}
 
-            env = os.environ.copy()
-            env.update(self.environment)
-            env['LD_LIBRARY_PATH'] = '/usr/lib'
-            
             process = subprocess.run(
                 ["/bin/bash", str(script_path)],
                 cwd=str(assets_dir),
-                env=env,
+                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib'},
                 capture_output=True,
                 text=True
             )
             
             if process.returncode != 0:
                 return {"status": "error", "message": process.stderr}
+
+            # Remove installation marker
+            marker_file = Path(self.main_path) / ".installed"
+            if marker_file.exists():
+                marker_file.unlink()
                 
             return {"status": "success", "output": "ReShade uninstalled"}
         except Exception as e:
@@ -206,10 +197,6 @@ class Plugin:
             except ValueError as e:
                 return {"status": "error", "message": str(e)}
 
-            env = os.environ.copy()
-            env.update(self.environment)
-            env['LD_LIBRARY_PATH'] = '/usr/lib'
-
             cmd = ["/bin/bash", str(script_path), action, game_path, dll_override]
             if vulkan_mode:
                 cmd.extend([vulkan_mode, os.path.expanduser(f"~/.local/share/Steam/steamapps/compatdata/{appid}")])
@@ -217,7 +204,7 @@ class Plugin:
             process = subprocess.run(
                 cmd,
                 cwd=str(assets_dir),
-                env=env,
+                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib'},
                 capture_output=True,
                 text=True
             )
