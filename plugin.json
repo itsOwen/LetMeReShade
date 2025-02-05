@@ -6,6 +6,6 @@
   "publish": {
     "tags": ["reshade", "shaders","graphics","presets"],
     "description": "ReShade plugin for Steam Deck - Enhanced version with improved shader and game management.",
-    "image": "shade.jpg"
+    "image": "https://raw.githubusercontent.com/itsOwen/LetMeReShade/0bae4f23a4c6e964eb0f549515d7d26fe40d24b0/assets/shade.jpg"
   }
 }
