@@ -3,7 +3,7 @@
 [![Decky Plugin](https://img.shields.io/badge/Decky-Plugin-brightgreen.svg)](https://github.com/SteamDeckHomebrew/decky-loader)
 [![License](https://img.shields.io/badge/license-BSD--3-blue.svg)](LICENSE)
 
-> Transform your Steam Deck gaming experience with advanced shader customization and graphics enhancement! 🚀
+> Transform your Steam Deck gaming experience with advanced shader customization and graphics enhancements! 🚀
 
 ![LetMeReShade Banner](assets/shade.jpg)
 
@@ -19,17 +19,19 @@
 ## 📋 Prerequisites
 
 - Decky Loader installed on your Steam Deck
-- Internet connection for initial setup and shader downloads
+- An internet connection for initial setup and shader downloads
 - Some free space for shader storage
 
 ## 🚀 Installation
 
-**Note:** I just wanted to point out that reshade cause conflict with FGMOD as they both uses some dlls. I might be able to do a workaround, but for now, you have to use either one. So, whenever you want to use FGMOD, just uninstall/unpatch the game from the ReShade plugin(which will remove all reshade files) and then patch using FGMOD to use FGMOD without any issues, and vice versa.
+**Note:** ReShade conflicts with FGMOD as both use some of the same DLL files. I might be able to implement a workaround, but for now, you must choose between them. If you want to use FGMOD, uninstall/unpatch the game from the ReShade plugin (which will remove all ReShade files), then patch the game using FGMOD. To switch back to ReShade, reverse the process.
 
-1. Download the Latest Releases
-2. Extract the files to to homebrew/plugins/(foldername)
+### Installation Steps
+
+1. Download the latest release.
+2. Extract the files to `homebrew/plugins/(foldername)`.
 3. Restart your Steam Deck.
-4. Done, Enjoy!
+4. Done! Enjoy your enhanced graphics!
 
 ## 📷 Video Guide
 
@@ -39,23 +41,22 @@
 
 ### Initial Setup
 
-1. Open the Quick Access Menu (...)
-2. Navigate to the LetMeReShade plugin
-3. Click "Install ReShade" to set up the base components
+1. Open the Quick Access Menu (...).
+2. Navigate to the LetMeReShade plugin.
+3. Click "Install ReShade" to set up the base components.
 
 ### Adding ReShade to Games
 
-1. Select a game from your library in the plugin interface
-2. Click "Install ReShade" next to the game
-3. Wait for the installation to complete
-4. Launch your game and press HOME to access the ReShade overlay
+1. Select a game from your library within the plugin interface.
+2. Click "Install ReShade" next to the game.
+3. Wait for the installation to complete.
+4. Launch your game and press **HOME** to access the ReShade overlay.
 
 ## ⚙️ Advanced Configuration
 
 The plugin supports various advanced settings:
 
 ```bash
-
 # Environment Variables (automatically managed)
 XDG_DATA_HOME=~/.local/share
 UPDATE_RESHADE=1
@@ -63,34 +64,30 @@ MERGE_SHADERS=1
 VULKAN_SUPPORT=0
 GLOBAL_INI=ReShade.ini
 DELETE_RESHADE_FILES=0
-
 ```
 
 ## 🔧 Troubleshooting
 
 ### Common Issues
 
-1. ReShade overlay not appearing
+1. **ReShade overlay not appearing**
+   - Verify the correct DLL override is selected.
+   - Check if the HOME key is properly mapped.
+   - Ensure launch options are correctly set.
+   - Confirm that the game supports ReShade.
 
-   - Verify the correct DLL override is selected
-   - Check if HOME key is properly mapped
-   - Ensure launch options are correctly set
-   - Make sure the game supports it.
+2. **Game crashes on launch**
+   - Try a different DLL override (manual patching options will be added soon).
+   - Verify shader compatibility.
+   - Check the game's compatibility with ReShade.
 
-2. Game crashes on launch
-
-   - Try a different DLL override (will add manual patching options soon)
-   - Verify shader compatibility
-   - Check game compatibility with ReShade
-
-3. Performance Issues
-
-   - Disable intensive shaders
-   - Update to the latest version
+3. **Performance issues**
+   - Disable resource-intensive shaders.
+   - Ensure you are using the latest version.
 
 ## 📝 Contributing
 
-We welcome contributions! Please feel free to:
+We welcome contributions! Feel free to:
 
 - Report bugs
 - Suggest features
@@ -107,23 +104,22 @@ The plugin automatically checks for:
 
 ## ⚖️ License
 
-This project is licensed under the BSD-3-Clause License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the BSD-3-Clause License. See the [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
-- ZigmA (for giving me the idea to build the plugin and helping me testing it.)
-- xXJSONDeruloXx (for his brilliant plugin Decky Framegen, which is used as base for this plugin.)
-- kevinlekiller (for his reshade-steam-proton repo.)
+- **ZigmA** for inspiring this plugin and assisting with testing.
+- **xXJSONDeruloXx** for his brilliant plugin, *Decky Framegen*, which serves as the foundation for this plugin.
+- **kevinlekiller** for his *reshade-steam-proton* repository.
 
 ## 📞 Support
 
-For support, please:
+For assistance:
 
-1. Check the troubleshooting guide
-2. Search existing issues
-3. Create a new issue if needed
+1. Check the troubleshooting guide.
+2. Search existing issues.
+3. Create a new issue if needed.
 
 ---
 
 <p align="center">Made with ❤️ for the Steam Deck Community</p>
-
