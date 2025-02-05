@@ -16,7 +16,6 @@
 - 💾 Global preset management
 - 🎮 Compatible with most Steam games
 - 🔍 Automatic game detection and configuration
-- ⚡ Vulkan support (experimental)
 
 ## 📋 Prerequisites
 
@@ -44,7 +43,7 @@
 1. Select a game from your library in the plugin interface
 2. Click "Install ReShade" next to the game
 3. Wait for the installation to complete
-4. Launch your game and press INSERT/Home to access the ReShade overlay
+4. Launch your game and press HOME to access the ReShade overlay
 
 ### Managing Settings
 
@@ -76,7 +75,7 @@ DELETE_RESHADE_FILES=0
 1. ReShade overlay not appearing
 
    - Verify the correct DLL override is selected
-   - Check if INSERT or Home key is properly mapped
+   - Check if HOME key is properly mapped
    - Ensure launch options are correctly set
 
 2. Game crashes on launch
