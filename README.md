@@ -24,10 +24,16 @@
 
 ## 🚀 Installation
 
+**Note:** I just wanted to point out that reshade cause conflict with FGMOD as they both uses some dlls. I might be able to do a workaround, but for now, you have to use either one. So, whenever you want to use FGMOD, just uninstall/unpatch the game from the ReShade plugin(which will remove all reshade files) and then patch using FGMOD to use FGMOD without any issues, and vice versa.
+
 1. Download the Latest Releases
 2. Extract the files to to homebrew/plugins/(foldername)
 3. Restart your Steam Deck.
 4. Done, Enjoy!
+
+## 📷 Video Guide
+
+[![Watch the video](https://img.youtube.com/vi/4uTVz7deH6E/maxresdefault.jpg)](https://youtu.be/4uTVz7deH6E)
 
 ## 🎮 Usage
 
@@ -107,6 +113,7 @@ This project is licensed under the BSD-3-Clause License - see the [LICENSE](LICE
 
 - ZigmA (for giving me the idea to build the plugin and helping me testing it.)
 - xXJSONDeruloXx (for his brilliant plugin Decky Framegen, which is used as base for this plugin.)
+- kevinlekiller (for his reshade-steam-proton repo.)
 
 ## 📞 Support
 
