@@ -1,0 +1,11 @@
+{
+  "name": "LetMeReShade",
+  "author": "itsOwen",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["reshade", "shaders","graphics","presets"],
+    "description": "ReShade plugin for Steam Deck - Enhanced version with improved shader and game management.",
+    "image": "shade.jpg"
+  }
+}

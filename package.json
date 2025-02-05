@@ -1,0 +1,64 @@
+{
+  "name": "letmereshade-decky",
+  "version": "0.1",
+  "description": "ReShade plugin for Steam Deck - Enhanced version with improved shader and game management",
+  "type": "module",
+  "scripts": {
+    "build": "rollup -c",
+    "watch": "rollup -c -w",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/itsOwen/LetMeReShade.git"
+  },
+  "keywords": [
+    "decky",
+    "plugin",
+    "reshade",
+    "shaders",
+    "steam-deck",
+    "graphics"
+  ],
+  "author": "itsOwen",
+  "license": "BSD-3-Clause",
+  "bugs": {
+    "url": "https://github.com/itsOwen/LetMeReShade.git/issues"
+  },
+  "homepage": "https://github.com/itsOwen/LetMeReShade.git",
+  "devDependencies": {
+    "@decky/rollup": "^1.0.1",
+    "@decky/ui": "^4.7.2",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "@types/webpack": "^5.28.5",
+    "rollup": "^4.22.5",
+    "typescript": "^5.6.2"
+  },
+  "dependencies": {
+    "@decky/api": "^1.1.2",
+    "react-icons": "^5.3.0",
+    "tslib": "^2.7.0"
+  },
+  "pnpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "react",
+        "react-dom"
+      ]
+    }
+  },
+  "remote_binary_bundling" : false,
+  "remote_binary": [
+    {
+      "name": "d3dcompiler_47.dll",
+      "url": "https://raw.githubusercontent.com/mozilla/fxc2/9aba9b1/dll/d3dcompiler_47.dll",
+      "sha256hash": "4432bbd1a390874f3f0a503d45cc48d346abc3a8c0213c289f4b615bf0ee84f3"
+    },
+    {
+      "name": "7z",
+      "url": "https://www.7-zip.org/a/7z2301-linux-x64.tar.xz",
+      "sha256hash": "3a4b8d28477f696c676487b3cf15e86b407a87abd2d84c5bc3f696cd33b34abb"
+    }
+  ]
+}
