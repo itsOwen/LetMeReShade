@@ -54,7 +54,82 @@ class Plugin:
                     for line in manifest:
                         if '"installdir"' in line:
                             install_dir = line.split('"installdir"')[1].strip().strip('"')
-                            return str(Path(library_path) / "steamapps" / "common" / install_dir)
+                            base_path = Path(library_path) / "steamapps" / "common" / install_dir
+                            
+                            # Get name of the game directory for smarter exe matching
+                            game_name = install_dir.lower().replace("_", " ").replace("-", " ")
+                            game_words = set(word.strip() for word in game_name.split())
+
+                            def score_executable(exe_path: Path) -> float:
+                                """Score an executable based on various factors to determine if it's likely the main game exe"""
+                                if not exe_path.is_file():
+                                    return 0
+                                    
+                                name = exe_path.stem.lower()
+                                score = 0
+
+                                # Skip utility executables
+                                if any(skip in name for skip in ["unins", "launcher", "crash", "setup", "config", "redist"]):
+                                    return 0
+
+                                # Analyze file size - main game executables tend to be larger
+                                try:
+                                    size = exe_path.stat().st_size
+                                    if size > 1024 * 1024 * 10:  # Larger than 10MB
+                                        score += 2
+                                    elif size < 1024 * 1024:  # Smaller than 1MB
+                                        score -= 1
+                                except:
+                                    pass
+
+                                # Check if exe name contains words from the game directory name
+                                name_words = set(word.strip() for word in name.split())
+                                matching_words = game_words.intersection(name_words)
+                                score += len(matching_words) * 2
+
+                                return score
+
+                            def find_best_exe(path: Path, max_depth=4) -> tuple[Path, float]:
+                                """Recursively find the executable with the highest score"""
+                                if not path.exists() or not path.is_dir():
+                                    return None, 0
+
+                                best_exe = None
+                                best_score = -1
+
+                                try:
+                                    # First check current directory
+                                    for exe in path.glob("*.exe"):
+                                        score = score_executable(exe)
+                                        if score > best_score:
+                                            best_score = score
+                                            best_exe = exe.parent
+
+                                    # Then recurse into subdirectories if we haven't found a good match
+                                    if best_score < 3 and max_depth > 0:
+                                        for subdir in path.iterdir():
+                                            if subdir.is_dir():
+                                                sub_exe, sub_score = find_best_exe(subdir, max_depth - 1)
+                                                if sub_score > best_score:
+                                                    best_score = sub_score
+                                                    best_exe = sub_exe
+
+                                except (PermissionError, OSError):
+                                    pass
+
+                                return best_exe, best_score
+
+                            # Find the best executable
+                            best_path, score = find_best_exe(base_path)
+                            
+                            # If we found a good match, use that directory
+                            if best_path and score > 0:
+                                decky.logger.info(f"Found game executable directory: {best_path} (score: {score})")
+                                return str(best_path)
+                            
+                            # Fallback to base path if no good match found
+                            decky.logger.info(f"No suitable executable found, using base path: {base_path}")
+                            return str(base_path)
 
         raise ValueError(f"Could not find installation directory for AppID: {appid}")
 
