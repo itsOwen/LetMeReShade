@@ -41,7 +41,7 @@
 
 ### Initial Setup
 
-1. Open the Quick Access Menu (...).
+1. Open the Quick Access Menu.
 2. Navigate to the LetMeReShade plugin.
 3. Click "Install ReShade" to set up the base components.
 
