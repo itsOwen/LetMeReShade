@@ -8,7 +8,6 @@ import {
 import { definePlugin, callable } from "@decky/api";
 import { IoMdColorPalette } from "react-icons/io";
 
-// Type definitions
 interface InstallResult {
   status: string;
   message?: string;
@@ -35,7 +34,6 @@ interface GameListResponse {
   games: GameInfo[];
 }
 
-// Backend callable functions with proper typing
 const runInstallReShade = callable<[], ReShadeResponse>("run_install_reshade");
 const runUninstallReShade = callable<[], ReShadeResponse>("run_uninstall_reshade");
 const manageGameReShade = callable<[string, string, string], ReShadeResponse>("manage_game_reshade");
@@ -134,38 +132,32 @@ function ReShadeInstallerSection() {
 
       {installResult && (
         <PanelSectionRow>
-          <div>
-            <strong>Status:</strong> {installResult.status === "success" ? "Success" : "Error"}
-            {installResult.output && (
-              <>
-                <strong>Output:</strong>
-                <pre style={{ whiteSpace: "pre-wrap" }}>{installResult.output}</pre>
-              </>
-            )}
-            {installResult.message && (
-              <>
-                <strong>Error:</strong> {installResult.message}
-              </>
-            )}
+          <div style={{
+            padding: '12px',
+            marginTop: '16px',
+            backgroundColor: 'var(--decky-selected-ui-bg)',
+            borderRadius: '4px',
+            color: installResult.status === "success" ? "green" : "red"
+          }}>
+            {installResult.status === "success" ? 
+              "✅ ReShade installed successfully!" : 
+              `❌ Error: ${installResult.message || "Installation failed"}`}
           </div>
         </PanelSectionRow>
       )}
 
       {uninstallResult && (
         <PanelSectionRow>
-          <div>
-            <strong>Status:</strong> {uninstallResult.status === "success" ? "Success" : "Error"}
-            {uninstallResult.output && (
-              <>
-                <strong>Output:</strong>
-                <pre style={{ whiteSpace: "pre-wrap" }}>{uninstallResult.output}</pre>
-              </>
-            )}
-            {uninstallResult.message && (
-              <>
-                <strong>Error:</strong> {uninstallResult.message}
-              </>
-            )}
+          <div style={{
+            padding: '12px',
+            marginTop: '16px',
+            backgroundColor: 'var(--decky-selected-ui-bg)',
+            borderRadius: '4px',
+            color: uninstallResult.status === "success" ? "green" : "red"
+          }}>
+            {uninstallResult.status === "success" ? 
+              "✅ ReShade uninstalled successfully!" : 
+              `❌ Error: ${uninstallResult.message || "Uninstallation failed"}`}
           </div>
         </PanelSectionRow>
       )}
@@ -213,6 +205,12 @@ function InstalledGamesSection() {
     if (!selectedGame) return;
 
     try {
+      const reshadeCheck = await checkReShadePath();
+      if (!reshadeCheck.exists) {
+        setResult("Please install ReShade first before patching games.");
+        return;
+      }
+
       const response = await manageGameReShade(
         selectedGame.appid.toString(),
         "install",
@@ -225,10 +223,10 @@ function InstalledGamesSection() {
           const launchOptions = launchOptionsMatch[1];
           const detectedApi = launchOptions.match(/;(\w+)=n,b/)?.pop() || 'dxgi';
           await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, launchOptions);
-          setResult(`ReShade installed successfully for ${selectedGame.name} using ${detectedApi.toUpperCase()} API.\nPress Home key in-game to open ReShade overlay.\nLaunch options set: ${launchOptions}`);
+          setResult(`ReShade installed successfully for ${selectedGame.name} using ${detectedApi.toUpperCase()} API.\nPress Home key in-game to open ReShade overlay.`);
         } else {
           await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, 'WINEDLLOVERRIDES="d3dcompiler_47=n;dxgi=n,b" %command%');
-          setResult(`ReShade installed successfully for ${selectedGame.name}. Launch options set to default.`);
+          setResult(`ReShade installed successfully for ${selectedGame.name}. Press Home key in-game to open ReShade overlay.`);
         }
       } else {
         setResult(`Failed to install ReShade: ${response.message || 'Unknown error'}`);
@@ -243,6 +241,12 @@ function InstalledGamesSection() {
     if (!selectedGame) return;
 
     try {
+      const reshadeCheck = await checkReShadePath();
+      if (!reshadeCheck.exists) {
+        setResult("ReShade is not installed.");
+        return;
+      }
+
       const response = await manageGameReShade(
         selectedGame.appid.toString(),
         "uninstall",
