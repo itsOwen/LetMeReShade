@@ -119,7 +119,7 @@ function ReShadeInstallerSection() {
       {pathExists === false && (
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={handleInstallClick} disabled={installing}>
-            {installing ? "Installing..." : "Install ReShade"}
+            {installing ? "Installing..." : "🔧 Install ReShade"}
           </ButtonItem>
         </PanelSectionRow>
       )}
@@ -127,7 +127,7 @@ function ReShadeInstallerSection() {
       {pathExists === true && (
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={handleUninstallClick} disabled={uninstalling}>
-            {uninstalling ? "Uninstalling..." : "Uninstall ReShade"}
+            {uninstalling ? "Uninstalling..." : "🗑️ Uninstall ReShade"}
           </ButtonItem>
         </PanelSectionRow>
       )}
@@ -172,7 +172,7 @@ function ReShadeInstallerSection() {
 
       <PanelSectionRow>
         <div>
-          Press INSERT/Home key in-game to access the ReShade overlay.
+          Press HOME key in-game to access the ReShade overlay.
         </div>
       </PanelSectionRow>
     </PanelSection>
@@ -218,7 +218,7 @@ function InstalledGamesSection() {
         "install",
         "dxgi"
       );
-      
+
       if (response.status === "success") {
         const launchOptionsMatch = response.output?.match(/Use this launch option: (.+)/);
         if (launchOptionsMatch) {
@@ -248,7 +248,7 @@ function InstalledGamesSection() {
         "uninstall",
         "dxgi"
       );
-      
+
       if (response.status === "success") {
         await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, '');
         setResult(`ReShade removed successfully from ${selectedGame.name}`);
@@ -282,7 +282,7 @@ function InstalledGamesSection() {
 
       {result && (
         <PanelSectionRow>
-          <div style={{ 
+          <div style={{
             padding: '12px',
             marginTop: '16px',
             backgroundColor: 'var(--decky-selected-ui-bg)',
@@ -292,7 +292,7 @@ function InstalledGamesSection() {
           </div>
         </PanelSectionRow>
       )}
-      
+
       {selectedGame && (
         <>
           <PanelSectionRow>
@@ -300,7 +300,7 @@ function InstalledGamesSection() {
               layout="below"
               onClick={handlePatchClick}
             >
-              Install ReShade
+              🔧 Install ReShade
             </ButtonItem>
           </PanelSectionRow>
           <PanelSectionRow>
@@ -308,7 +308,7 @@ function InstalledGamesSection() {
               layout="below"
               onClick={handleUnpatchClick}
             >
-              Remove ReShade
+              🗑️ Remove ReShade
             </ButtonItem>
           </PanelSectionRow>
         </>
