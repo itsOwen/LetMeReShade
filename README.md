@@ -12,7 +12,6 @@
 - 🎨 Easy ReShade installation and management
 - 🎯 One-click game-specific shader application
 - 🔄 Seamless shader updates and synchronization
-- 🛠️ Advanced configuration options
 - 💾 Global preset management
 - 🎮 Compatible with most Steam games
 - 🔍 Automatic game detection and configuration
@@ -45,13 +44,6 @@
 3. Wait for the installation to complete
 4. Launch your game and press HOME to access the ReShade overlay
 
-### Managing Settings
-
-- Toggle Vulkan Support for compatible games
-- Enable/disable shader merging
-- Configure global presets
-- Manage installation options
-
 ## ⚙️ Advanced Configuration
 
 The plugin supports various advanced settings:
@@ -77,6 +69,7 @@ DELETE_RESHADE_FILES=0
    - Verify the correct DLL override is selected
    - Check if HOME key is properly mapped
    - Ensure launch options are correctly set
+   - Make sure the game supports it.
 
 2. Game crashes on launch
 
@@ -88,7 +81,6 @@ DELETE_RESHADE_FILES=0
 
    - Disable intensive shaders
    - Update to the latest version
-   - Check GPU compatibility
 
 ## 📝 Contributing
 
@@ -113,7 +105,8 @@ This project is licensed under the BSD-3-Clause License - see the [LICENSE](LICE
 
 ## 🙏 Acknowledgments
 
-Will add as soon as the plugin is fully operational
+- ZigmA (for giving me the idea to build the plugin and help in testing.)
+- xXJSONDeruloXx (for his brilliant plugin Decky Framegen, which is used as base for this plugin.)
 
 ## 📞 Support
 
