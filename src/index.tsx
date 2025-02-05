@@ -3,96 +3,52 @@ import {
   PanelSection,
   PanelSectionRow,
   ButtonItem,
-  ToggleField,
-  Field,
+  DropdownItem
 } from "@decky/ui";
 import { definePlugin, callable } from "@decky/api";
-import { VscSymbolColor } from "react-icons/vsc";
+import { IoMdColorPalette } from "react-icons/io";
+
+// Type definitions
+interface InstallResult {
+  status: string;
+  message?: string;
+  output?: string;
+}
 
 interface GameInfo {
   appid: string;
   name: string;
 }
 
-interface AdvancedSettings {
-  vulkanSupport: boolean;
-  mergeShaders: boolean;
-  deleteFiles: boolean;
-}
-
-interface InstallationResult {
+interface ReShadeResponse {
   status: string;
   message?: string;
   output?: string;
-  launchOptions?: string;
 }
 
-const runInstallReShade = callable<[], { status: string; message?: string; output?: string }>("run_install_reshade");
-const runUninstallReShade = callable<[], { status: string; message?: string; output?: string }>("run_uninstall_reshade");
-const manageGameReShade = callable<[string, string, string, string?], { status: string; message?: string; output?: string }>("manage_game_reshade");
-const checkReShadePath = callable<[], { exists: boolean }>("check_reshade_path");
-const listInstalledGames = callable<[], { status: string; games: GameInfo[] }>("list_installed_games");
+interface PathCheckResponse {
+  exists: boolean;
+}
+
+interface GameListResponse {
+  status: string;
+  games: GameInfo[];
+}
+
+// Backend callable functions with proper typing
+const runInstallReShade = callable<[], ReShadeResponse>("run_install_reshade");
+const runUninstallReShade = callable<[], ReShadeResponse>("run_uninstall_reshade");
+const manageGameReShade = callable<[string, string, string], ReShadeResponse>("manage_game_reshade");
+const checkReShadePath = callable<[], PathCheckResponse>("check_reshade_path");
+const listInstalledGames = callable<[], GameListResponse>("list_installed_games");
 const logError = callable<[string], void>("log_error");
 
-function StatusMessage({ type, message }: { type: "success" | "error"; message: string }) {
-  return (
-    <div style={{ 
-      padding: '12px',
-      marginTop: '8px',
-      backgroundColor: type === "success" ? "rgba(0,255,0,0.1)" : "rgba(255,0,0,0.1)",
-      borderRadius: '4px',
-      fontSize: '14px'
-    }}>
-      {message}
-    </div>
-  );
-}
-
-function AdvancedSettingsSection({ settings, onSettingsChange }: { 
-  settings: AdvancedSettings; 
-  onSettingsChange: (settings: AdvancedSettings) => void 
-}) {
-  return (
-    <PanelSection title="Advanced Settings">
-      <PanelSectionRow>
-        <ToggleField
-          label="Vulkan Support"
-          description="Enable experimental Vulkan support"
-          checked={settings.vulkanSupport}
-          onChange={(checked) => onSettingsChange({ ...settings, vulkanSupport: checked })}
-        />
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ToggleField
-          label="Merge Shaders"
-          description="Combine shaders from all repositories"
-          checked={settings.mergeShaders}
-          onChange={(checked) => onSettingsChange({ ...settings, mergeShaders: checked })}
-        />
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ToggleField
-          label="Delete Files on Uninstall"
-          description="Remove ReShade files when uninstalling"
-          checked={settings.deleteFiles}
-          onChange={(checked) => onSettingsChange({ ...settings, deleteFiles: checked })}
-        />
-      </PanelSectionRow>
-    </PanelSection>
-  );
-}
-
 function ReShadeInstallerSection() {
-  const [installing, setInstalling] = useState(false);
-  const [uninstalling, setUninstalling] = useState(false);
-  const [installResult, setInstallResult] = useState<InstallationResult | null>(null);
-  const [uninstallResult, setUninstallResult] = useState<InstallationResult | null>(null);
+  const [installing, setInstalling] = useState<boolean>(false);
+  const [uninstalling, setUninstalling] = useState<boolean>(false);
+  const [installResult, setInstallResult] = useState<InstallResult | null>(null);
+  const [uninstallResult, setUninstallResult] = useState<InstallResult | null>(null);
   const [pathExists, setPathExists] = useState<boolean | null>(null);
-  const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettings>({
-    vulkanSupport: false,
-    mergeShaders: true,
-    deleteFiles: false
-  });
 
   useEffect(() => {
     const checkPath = async () => {
@@ -100,7 +56,7 @@ function ReShadeInstallerSection() {
         const result = await checkReShadePath();
         setPathExists(result.exists);
       } catch (e) {
-        logError('useEffect -> checkPath: ' + String(e));
+        await logError(`useEffect -> checkPath: ${String(e)}`);
       }
     };
     checkPath();
@@ -127,274 +83,245 @@ function ReShadeInstallerSection() {
   const handleInstallClick = async () => {
     try {
       setInstalling(true);
-      logError("Starting ReShade installation...");
       const result = await runInstallReShade();
-      logError(`Installation result: ${JSON.stringify(result)}`);
-      setInstalling(false);
       setInstallResult(result);
     } catch (e) {
-      logError('handleInstallClick error: ' + String(e));
-      setInstalling(false);
       setInstallResult({ status: "error", message: String(e) });
+      await logError(`Install error: ${String(e)}`);
+    } finally {
+      setInstalling(false);
     }
   };
 
   const handleUninstallClick = async () => {
     try {
       setUninstalling(true);
-      logError("Starting ReShade uninstallation...");
       const result = await runUninstallReShade();
-      logError(`Uninstallation result: ${JSON.stringify(result)}`);
-      setUninstalling(false);
       setUninstallResult(result);
     } catch (e) {
-      logError('handleUninstallClick error: ' + String(e));
-      setUninstalling(false);
       setUninstallResult({ status: "error", message: String(e) });
+      await logError(`Uninstall error: ${String(e)}`);
+    } finally {
+      setUninstalling(false);
     }
   };
 
   return (
-    <>
-      <PanelSection>
-        {pathExists !== null && (
-          <PanelSectionRow>
-            <Field
-              label="ReShade Status"
-              bottomSeparator="none"
-              icon={<div style={{ color: pathExists ? "green" : "red" }}>●</div>}
-            >
-              {pathExists ? "Installed" : "Not Installed"}
-            </Field>
-          </PanelSectionRow>
-        )}
-        
-        {pathExists === false && (
-          <PanelSectionRow>
-            <ButtonItem 
-              layout="below" 
-              onClick={handleInstallClick} 
-              disabled={installing}
-            >
-              {installing ? "Installing..." : "Install ReShade"}
-            </ButtonItem>
-          </PanelSectionRow>
-        )}
-        
-        {pathExists === true && (
-          <PanelSectionRow>
-            <ButtonItem 
-              layout="below" 
-              onClick={handleUninstallClick} 
-              disabled={uninstalling}
-            >
-              {uninstalling ? "Uninstalling..." : "Uninstall ReShade"}
-            </ButtonItem>
-          </PanelSectionRow>
-        )}
+    <PanelSection>
+      {pathExists !== null && (
+        <PanelSectionRow>
+          <div style={{ color: pathExists ? "green" : "red" }}>
+            {pathExists ? "ReShade Is Installed" : "ReShade Not Installed"}
+          </div>
+        </PanelSectionRow>
+      )}
 
-        {installResult && (
-          <PanelSectionRow>
-            <StatusMessage 
-              type={installResult.status === "success" ? "success" : "error"}
-              message={installResult.output || installResult.message || installResult.status}
-            />
-          </PanelSectionRow>
-        )}
+      {pathExists === false && (
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={handleInstallClick} disabled={installing}>
+            {installing ? "Installing..." : "Install ReShade"}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
 
-        {uninstallResult && (
-          <PanelSectionRow>
-            <StatusMessage 
-              type={uninstallResult.status === "success" ? "success" : "error"}
-              message={uninstallResult.output || uninstallResult.message || uninstallResult.status}
-            />
-          </PanelSectionRow>
-        )}
-      </PanelSection>
-      <AdvancedSettingsSection settings={advancedSettings} onSettingsChange={setAdvancedSettings} />
-    </>
+      {pathExists === true && (
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={handleUninstallClick} disabled={uninstalling}>
+            {uninstalling ? "Uninstalling..." : "Uninstall ReShade"}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+
+      {installResult && (
+        <PanelSectionRow>
+          <div>
+            <strong>Status:</strong> {installResult.status === "success" ? "Success" : "Error"}
+            {installResult.output && (
+              <>
+                <strong>Output:</strong>
+                <pre style={{ whiteSpace: "pre-wrap" }}>{installResult.output}</pre>
+              </>
+            )}
+            {installResult.message && (
+              <>
+                <strong>Error:</strong> {installResult.message}
+              </>
+            )}
+          </div>
+        </PanelSectionRow>
+      )}
+
+      {uninstallResult && (
+        <PanelSectionRow>
+          <div>
+            <strong>Status:</strong> {uninstallResult.status === "success" ? "Success" : "Error"}
+            {uninstallResult.output && (
+              <>
+                <strong>Output:</strong>
+                <pre style={{ whiteSpace: "pre-wrap" }}>{uninstallResult.output}</pre>
+              </>
+            )}
+            {uninstallResult.message && (
+              <>
+                <strong>Error:</strong> {uninstallResult.message}
+              </>
+            )}
+          </div>
+        </PanelSectionRow>
+      )}
+
+      <PanelSectionRow>
+        <div>
+          Press INSERT/Home key in-game to access the ReShade overlay.
+        </div>
+      </PanelSectionRow>
+    </PanelSection>
   );
 }
 
+interface ProcessedGameInfo {
+  appid: number;
+  name: string;
+}
+
 function InstalledGamesSection() {
-  const [games, setGames] = useState<GameInfo[]>([]);
-  const [processingGames, setProcessingGames] = useState<Record<string, boolean>>({});
-  const [results, setResults] = useState<Record<string, { message: string; type: "success" | "error" }>>({});
+  const [games, setGames] = useState<ProcessedGameInfo[]>([]);
+  const [selectedGame, setSelectedGame] = useState<ProcessedGameInfo | null>(null);
+  const [result, setResult] = useState<string>('');
 
   useEffect(() => {
     const fetchGames = async () => {
       try {
-        logError("Fetching games list...");
         const response = await listInstalledGames();
-        logError(`Games response: ${JSON.stringify(response)}`);
         if (response.status === "success") {
-          const sortedGames = [...response.games]
-            .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
-            .filter(game => !game.name.includes("Runtime") && !game.name.includes("Proton"));
+          const sortedGames = response.games
+            .map(game => ({
+              appid: parseInt(game.appid, 10),
+              name: game.name
+            }))
+            .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
           setGames(sortedGames);
         }
       } catch (error) {
-        logError("Error fetching games: " + String(error));
+        await logError(`Error fetching games: ${String(error)}`);
       }
     };
     fetchGames();
   }, []);
 
-  const handlePatchClick = async (game: GameInfo) => {
-    logError(`Installing ReShade for game: ${game.name} (AppID: ${game.appid})`);
-    setProcessingGames(prev => ({ ...prev, [game.appid]: true }));
-    
-    try {
-      const response = await manageGameReShade(game.appid, "install", "dxgi");
-      logError(`Game manager response: ${JSON.stringify(response)}`);
+  const handlePatchClick = async () => {
+    if (!selectedGame) return;
 
+    try {
+      const response = await manageGameReShade(
+        selectedGame.appid.toString(),
+        "install",
+        "dxgi"
+      );
+      
       if (response.status === "success") {
-        const launchOptionsMatch = response.output?.match(/Use this launch option: (.+)/);
-        const launchOptions = launchOptionsMatch ? 
-          launchOptionsMatch[1] : 
-          'WINEDLLOVERRIDES="d3dcompiler_47=n;dxgi=n,b" %command%';
-        
-        const detectedApi = launchOptions.match(/;(\w+)=n,b/)?.pop() || 'dxgi';
-        
-        await SteamClient.Apps.SetAppLaunchOptions(parseInt(game.appid), launchOptions);
-        
-        setResults(prev => ({
-          ...prev,
-          [game.appid]: {
-            type: "success",
-            message: `ReShade installed successfully using ${detectedApi.toUpperCase()} API.
-Press Home key in-game to open ReShade overlay.
-Launch options set: ${launchOptions}`
-          }
-        }));
+        const launchOptions = 'WINEDLLOVERRIDES="d3dcompiler_47=n;dxgi=n,b" %command%';
+        await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, launchOptions);
+        setResult(`ReShade installed successfully for ${selectedGame.name}. Launch options have been set.`);
       } else {
-        setResults(prev => ({
-          ...prev,
-          [game.appid]: {
-            type: "error",
-            message: `Installation failed: ${response.message || "Unknown error"}`
-          }
-        }));
+        setResult(`Failed to install ReShade: ${response.message || 'Unknown error'}`);
       }
     } catch (error) {
-      const errorMsg = String(error);
-      logError(`Error during installation: ${errorMsg}`);
-      setResults(prev => ({
-        ...prev,
-        [game.appid]: {
-          type: "error",
-          message: `Error: ${errorMsg}`
-        }
-      }));
-    } finally {
-      setProcessingGames(prev => ({ ...prev, [game.appid]: false }));
+      await logError(`handlePatchClick: ${String(error)}`);
+      setResult(`Error installing ReShade: ${String(error)}`);
     }
   };
 
-  const handleUnpatchClick = async (game: GameInfo) => {
-    logError(`Removing ReShade from game: ${game.name} (AppID: ${game.appid})`);
-    setProcessingGames(prev => ({ ...prev, [game.appid]: true }));
-    
-    try {
-      const response = await manageGameReShade(game.appid, "uninstall", "dxgi");
-      logError(`Game manager response: ${JSON.stringify(response)}`);
+  const handleUnpatchClick = async () => {
+    if (!selectedGame) return;
 
+    try {
+      const response = await manageGameReShade(
+        selectedGame.appid.toString(),
+        "uninstall",
+        "dxgi"
+      );
+      
       if (response.status === "success") {
-        await SteamClient.Apps.SetAppLaunchOptions(parseInt(game.appid), '');
-        setResults(prev => ({
-          ...prev,
-          [game.appid]: {
-            type: "success",
-            message: "ReShade removed successfully"
-          }
-        }));
+        await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, '');
+        setResult(`ReShade removed successfully from ${selectedGame.name}`);
       } else {
-        setResults(prev => ({
-          ...prev,
-          [game.appid]: {
-            type: "error",
-            message: `Removal failed: ${response.message || "Unknown error"}`
-          }
-        }));
+        setResult(`Failed to remove ReShade: ${response.message || 'Unknown error'}`);
       }
     } catch (error) {
-      const errorMsg = String(error);
-      logError(`Error during removal: ${errorMsg}`);
-      setResults(prev => ({
-        ...prev,
-        [game.appid]: {
-          type: "error",
-          message: `Error: ${errorMsg}`
-        }
-      }));
-    } finally {
-      setProcessingGames(prev => ({ ...prev, [game.appid]: false }));
+      await logError(`handleUnpatchClick: ${String(error)}`);
+      setResult(`Error removing ReShade: ${String(error)}`);
     }
   };
 
   return (
-    <PanelSection title="Games">
-      {games.map(game => (
-        <PanelSectionRow key={game.appid}>
+    <PanelSection title="Select a game to patch:">
+      <PanelSectionRow>
+        <DropdownItem
+          rgOptions={games.map(game => ({
+            data: game.appid,
+            label: game.name
+          }))}
+          selectedOption={selectedGame?.appid}
+          onChange={(option) => {
+            const game = games.find(g => g.appid === option.data);
+            setSelectedGame(game || null);
+            setResult('');
+          }}
+          strDefaultLabel="Select a game..."
+          menuLabel="Installed Games"
+        />
+      </PanelSectionRow>
+
+      {result && (
+        <PanelSectionRow>
           <div style={{ 
-            backgroundColor: 'var(--main-bg)',
             padding: '12px',
-            borderRadius: '8px',
-            width: '100%'
+            marginTop: '16px',
+            backgroundColor: 'var(--decky-selected-ui-bg)',
+            borderRadius: '4px'
           }}>
-            <div style={{ 
-              fontWeight: 'bold', 
-              fontSize: '1.1em',
-              marginBottom: '12px'
-            }}>
-              {game.name}
-            </div>
-            <div style={{
-              display: 'flex',
-              gap: '8px',
-              marginBottom: results[game.appid] ? '8px' : '0'
-            }}>
-              <ButtonItem 
-                layout="below" 
-                onClick={() => handlePatchClick(game)}
-                disabled={processingGames[game.appid]}
-              >
-                {processingGames[game.appid] ? "Installing..." : "Install ReShade"}
-              </ButtonItem>
-              <ButtonItem 
-                layout="below" 
-                onClick={() => handleUnpatchClick(game)}
-                disabled={processingGames[game.appid]}
-              >
-                {processingGames[game.appid] ? "Removing..." : "Remove ReShade"}
-              </ButtonItem>
-            </div>
-            {results[game.appid] && (
-              <StatusMessage 
-                type={results[game.appid].type}
-                message={results[game.appid].message}
-              />
-            )}
+            {result}
           </div>
         </PanelSectionRow>
-      ))}
+      )}
+      
+      {selectedGame && (
+        <>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              onClick={handlePatchClick}
+            >
+              Install ReShade
+            </ButtonItem>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              onClick={handleUnpatchClick}
+            >
+              Remove ReShade
+            </ButtonItem>
+          </PanelSectionRow>
+        </>
+      )}
     </PanelSection>
   );
 }
 
 export default definePlugin(() => ({
   name: "LetMeReShade Plugin",
-  titleView: (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-      <VscSymbolColor />
-      <span>LetMeReShade Manager</span>
-    </div>
-  ),
+  titleView: <div>ReShade Manager</div>,
+  alwaysRender: true,
   content: (
     <>
       <ReShadeInstallerSection />
       <InstalledGamesSection />
     </>
   ),
-  icon: <VscSymbolColor />,
+  icon: <IoMdColorPalette />,
+  onDismount() {
+    console.log("ReShade Plugin unmounted");
+  },
 }));
