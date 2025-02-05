@@ -220,9 +220,16 @@ function InstalledGamesSection() {
       );
       
       if (response.status === "success") {
-        const launchOptions = 'WINEDLLOVERRIDES="d3dcompiler_47=n;dxgi=n,b" %command%';
-        await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, launchOptions);
-        setResult(`ReShade installed successfully for ${selectedGame.name}. Launch options have been set.`);
+        const launchOptionsMatch = response.output?.match(/Use this launch option: (.+)/);
+        if (launchOptionsMatch) {
+          const launchOptions = launchOptionsMatch[1];
+          const detectedApi = launchOptions.match(/;(\w+)=n,b/)?.pop() || 'dxgi';
+          await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, launchOptions);
+          setResult(`ReShade installed successfully for ${selectedGame.name} using ${detectedApi.toUpperCase()} API.\nPress Home key in-game to open ReShade overlay.\nLaunch options set: ${launchOptions}`);
+        } else {
+          await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, 'WINEDLLOVERRIDES="d3dcompiler_47=n;dxgi=n,b" %command%');
+          setResult(`ReShade installed successfully for ${selectedGame.name}. Launch options set to default.`);
+        }
       } else {
         setResult(`Failed to install ReShade: ${response.message || 'Unknown error'}`);
       }
