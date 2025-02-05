@@ -1,5 +1,3 @@
-# Modified reshade-install.sh
-
 SEPERATOR="------------------------------------------------------------------------------------------------"
 COMMON_OVERRIDES="d3d8 d3d9 d3d11 ddraw dinput8 dxgi opengl32"
 REQUIRED_EXECUTABLES="7z curl git grep"
