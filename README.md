@@ -5,6 +5,8 @@
 
 > Transform your Steam Deck gaming experience with advanced shader customization and graphics enhancement! 🚀
 
+![LetMeReShade Banner](assets/shade.jpg)
+
 ## 🌟 Features
 
 - 🎨 Easy ReShade installation and management
