@@ -41,6 +41,11 @@ const checkReShadePath = callable<[], PathCheckResponse>("check_reshade_path");
 const listInstalledGames = callable<[], GameListResponse>("list_installed_games");
 const logError = callable<[string], void>("log_error");
 
+// VkBasalt callables
+const checkVkBasaltPath = callable<[], PathCheckResponse>("check_vkbasalt_path");
+const runInstallVkBasalt = callable<[], ReShadeResponse>("run_install_vkbasalt");
+const runUninstallVkBasalt = callable<[], ReShadeResponse>("run_uninstall_vkbasalt");
+
 function ReShadeInstallerSection() {
   const [installing, setInstalling] = useState<boolean>(false);
   const [uninstalling, setUninstalling] = useState<boolean>(false);
@@ -171,6 +176,130 @@ function ReShadeInstallerSection() {
   );
 }
 
+function VkBasaltInstallerSection() {
+  const [installing, setInstalling] = useState<boolean>(false);
+  const [uninstalling, setUninstalling] = useState<boolean>(false);
+  const [installResult, setInstallResult] = useState<InstallResult | null>(null);
+  const [uninstallResult, setUninstallResult] = useState<InstallResult | null>(null);
+  const [pathExists, setPathExists] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const checkPath = async () => {
+      try {
+        const result = await checkVkBasaltPath();
+        setPathExists(result.exists);
+      } catch (e) {
+        await logError(`VkBasalt useEffect -> checkPath: ${String(e)}`);
+      }
+    };
+    checkPath();
+    const intervalId = setInterval(checkPath, 3000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    if (installResult) {
+      const timer = setTimeout(() => setInstallResult(null), 5000);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [installResult]);
+
+  useEffect(() => {
+    if (uninstallResult) {
+      const timer = setTimeout(() => setUninstallResult(null), 5000);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [uninstallResult]);
+
+  const handleInstallClick = async () => {
+    try {
+      setInstalling(true);
+      const result = await runInstallVkBasalt();
+      setInstallResult(result);
+    } catch (e) {
+      setInstallResult({ status: "error", message: String(e) });
+      await logError(`VkBasalt Install error: ${String(e)}`);
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const handleUninstallClick = async () => {
+    try {
+      setUninstalling(true);
+      const result = await runUninstallVkBasalt();
+      setUninstallResult(result);
+    } catch (e) {
+      setUninstallResult({ status: "error", message: String(e) });
+      await logError(`VkBasalt Uninstall error: ${String(e)}`);
+    } finally {
+      setUninstalling(false);
+    }
+  };
+
+  return (
+    <PanelSection title="VkBasalt Management">
+      {pathExists !== null && (
+        <PanelSectionRow>
+          <div style={{ color: pathExists ? "green" : "red" }}>
+            {pathExists ? "🟢 VkBasalt Is Installed" : "🔴 VkBasalt Not Installed"}
+          </div>
+        </PanelSectionRow>
+      )}
+
+      {pathExists === false && (
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={handleInstallClick} disabled={installing}>
+            {installing ? "Installing..." : "🔧 Install VkBasalt"}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+
+      {pathExists === true && (
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={handleUninstallClick} disabled={uninstalling}>
+            {uninstalling ? "Uninstalling..." : "🗑️ Uninstall VkBasalt"}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+
+      {installResult && (
+        <PanelSectionRow>
+          <div style={{
+            padding: '12px',
+            marginTop: '16px',
+            backgroundColor: 'var(--decky-selected-ui-bg)',
+            borderRadius: '4px',
+            color: installResult.status === "success" ? "green" : "red"
+          }}>
+            {installResult.status === "success" ?
+              "✅ VkBasalt installed successfully!" :
+              `❌ Error: ${installResult.message || "Installation failed"}`}
+          </div>
+        </PanelSectionRow>
+      )}
+
+      {uninstallResult && (
+        <PanelSectionRow>
+          <div style={{
+            padding: '12px',
+            marginTop: '16px',
+            backgroundColor: 'var(--decky-selected-ui-bg)',
+            borderRadius: '4px',
+            color: uninstallResult.status === "success" ? "green" : "red"
+          }}>
+            {uninstallResult.status === "success" ?
+              "✅ VkBasalt uninstalled successfully!" :
+              `❌ Error: ${uninstallResult.message || "Uninstallation failed"}`}
+          </div>
+        </PanelSectionRow>
+      )}
+    </PanelSection>
+  );
+}
+
 interface ProcessedGameInfo {
   appid: number;
   name: string;
@@ -237,6 +366,25 @@ function InstalledGamesSection() {
     }
   };
 
+  const handleVkBasaltPatch = async () => {
+    if (!selectedGame) return;
+
+    try {
+      const vkbasaltCheck = await checkVkBasaltPath();
+      if (!vkbasaltCheck.exists) {
+        setResult("Please install VkBasalt first before patching games.");
+        return;
+      }
+
+      await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, 'ENABLE_VKBASALT=1 %command%');
+      setResult(`VkBasalt enabled for ${selectedGame.name}. Press Home key in-game to toggle effects.`);
+
+    } catch (error) {
+      await logError(`handleVkBasaltPatch: ${String(error)}`);
+      setResult(`Error enabling VkBasalt: ${String(error)}`);
+    }
+  };
+
   const handleUnpatchClick = async () => {
     if (!selectedGame) return;
 
@@ -255,7 +403,7 @@ function InstalledGamesSection() {
 
       if (response.status === "success") {
         await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, '');
-        setResult(`ReShade removed successfully from ${selectedGame.name}`);
+        setResult(`ReShade and VkBasalt removed successfully from ${selectedGame.name}`);
       } else {
         setResult(`Failed to remove ReShade: ${response.message || 'Unknown error'}`);
       }
@@ -266,7 +414,7 @@ function InstalledGamesSection() {
   };
 
   return (
-    <PanelSection title="Select a game to patch:">
+    <PanelSection title="Game Management">
       <PanelSectionRow>
         <DropdownItem
           rgOptions={games.map(game => ({
@@ -310,9 +458,17 @@ function InstalledGamesSection() {
           <PanelSectionRow>
             <ButtonItem
               layout="below"
+              onClick={handleVkBasaltPatch}
+            >
+              🎨 Enable VkBasalt
+            </ButtonItem>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
               onClick={handleUnpatchClick}
             >
-              🗑️ Remove ReShade
+              🗑️ Remove ReShade/VkBasalt
             </ButtonItem>
           </PanelSectionRow>
         </>
@@ -323,16 +479,17 @@ function InstalledGamesSection() {
 
 export default definePlugin(() => ({
   name: "LetMeReShade Plugin",
-  titleView: <div>ReShade Manager</div>,
+  titleView: <div>LetMeReShade Manager</div>,
   alwaysRender: true,
   content: (
     <>
       <ReShadeInstallerSection />
+      <VkBasaltInstallerSection />
       <InstalledGamesSection />
     </>
   ),
   icon: <IoMdColorPalette />,
   onDismount() {
-    console.log("ReShade Plugin unmounted");
+    console.log("Plugin unmounted");
   },
 }));
