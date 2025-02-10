@@ -110,11 +110,11 @@ function ReShadeInstallerSection() {
   };
 
   return (
-    <PanelSection>
+    <PanelSection title="ReShade Management">
       {pathExists !== null && (
         <PanelSectionRow>
           <div style={{ color: pathExists ? "green" : "red" }}>
-            {pathExists ? "ReShade Is Installed" : "ReShade Not Installed"}
+            {pathExists ? "🟢 ReShade Is Installed" : "🔴 ReShade Not Installed"}
           </div>
         </PanelSectionRow>
       )}
@@ -414,7 +414,7 @@ function InstalledGamesSection() {
   };
 
   return (
-    <PanelSection title="Game Management">
+    <PanelSection title="Install Patch in Game">
       <PanelSectionRow>
         <DropdownItem
           rgOptions={games.map(game => ({
