@@ -1,6 +1,6 @@
 {
   "name": "letmereshade-decky",
-  "version": "0.3",
+  "version": "0.5",
   "description": "ReShade plugin for Steam Deck - Enhanced version with improved shader and game management",
   "type": "module",
   "scripts": {
