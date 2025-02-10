@@ -17,7 +17,9 @@ class Plugin:
             'RESHADE_ADDON_SUPPORT': '0'
         }
         self.main_path = os.path.join(self.environment['XDG_DATA_HOME'], 'reshade')
+        self.vkbasalt_path = os.path.join(self.main_path, 'vkbasalt')
         os.makedirs(self.main_path, exist_ok=True)
+        os.makedirs(self.vkbasalt_path, exist_ok=True)
 
     async def _main(self):
         assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
@@ -31,6 +33,10 @@ class Plugin:
     async def check_reshade_path(self) -> dict:
         path = Path(os.path.expanduser("~/.local/share/reshade"))
         marker_file = path / ".installed"
+        return {"exists": marker_file.exists()}
+
+    async def check_vkbasalt_path(self) -> dict:
+        marker_file = Path(self.vkbasalt_path) / ".installed"
         return {"exists": marker_file.exists()}
 
     def _find_game_path(self, appid: str) -> str:
@@ -157,6 +163,39 @@ class Plugin:
             decky.logger.error(f"Install error: {str(e)}")
             return {"status": "error", "message": str(e)}
 
+    async def run_install_vkbasalt(self) -> dict:
+        try:
+            assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
+            script_path = assets_dir / "vkbasalt-install.sh"
+            
+            if not script_path.exists():
+                decky.logger.error(f"VkBasalt install script not found: {script_path}")
+                return {"status": "error", "message": "VkBasalt install script not found"}
+
+            process = subprocess.run(
+                ["/bin/bash", str(script_path)],
+                cwd=str(assets_dir),
+                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib'},
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+
+            decky.logger.info(f"VkBasalt install output:\n{process.stdout}")
+            if process.stderr:
+                decky.logger.error(f"VkBasalt install errors:\n{process.stderr}")
+
+            if process.returncode != 0:
+                return {"status": "error", "message": process.stderr}
+
+            marker_file = Path(self.vkbasalt_path) / ".installed"
+            marker_file.touch()
+            
+            return {"status": "success", "output": "VkBasalt installed successfully!"}
+        except Exception as e:
+            decky.logger.error(f"VkBasalt install error: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
     async def run_uninstall_reshade(self) -> dict:
         try:
             assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
@@ -182,6 +221,34 @@ class Plugin:
                 marker_file.unlink()
                 
             return {"status": "success", "output": "ReShade uninstalled"}
+        except Exception as e:
+            decky.logger.error(str(e))
+            return {"status": "error", "message": str(e)}
+
+    async def run_uninstall_vkbasalt(self) -> dict:
+        try:
+            assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
+            script_path = assets_dir / "vkbasalt-uninstall.sh"
+            
+            if not script_path.exists():
+                return {"status": "error", "message": "VkBasalt uninstall script not found"}
+
+            process = subprocess.run(
+                ["/bin/bash", str(script_path)],
+                cwd=str(assets_dir),
+                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib'},
+                capture_output=True,
+                text=True
+            )
+            
+            if process.returncode != 0:
+                return {"status": "error", "message": process.stderr}
+
+            marker_file = Path(self.vkbasalt_path) / ".installed"
+            if marker_file.exists():
+                marker_file.unlink()
+                
+            return {"status": "success", "output": "VkBasalt uninstalled"}
         except Exception as e:
             decky.logger.error(str(e))
             return {"status": "error", "message": str(e)}
