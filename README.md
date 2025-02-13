@@ -14,6 +14,7 @@
   - ⚡ **VkBasalt** (Vulkan)
 - One-click installation and management
 - Automatic game detection and configuration
+- Manual DLL Patching
 - Global preset management and custom shader support
 - In-game overlay accessible via the **HOME** key
 - Steam Deck–optimized configurations
