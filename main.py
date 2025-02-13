@@ -16,8 +16,12 @@ class Plugin:
             'FORCE_RESHADE_UPDATE_CHECK': '0',
             'RESHADE_ADDON_SUPPORT': '0'
         }
+        # Separate base paths for ReShade and VkBasalt
         self.main_path = os.path.join(self.environment['XDG_DATA_HOME'], 'reshade')
-        self.vkbasalt_path = os.path.join(self.main_path, 'vkbasalt')
+        self.vkbasalt_base_path = os.path.join(self.environment['XDG_DATA_HOME'], 'vkbasalt')
+        self.vkbasalt_path = os.path.join(self.vkbasalt_base_path, 'installation')
+        
+        # Create necessary directories
         os.makedirs(self.main_path, exist_ok=True)
         os.makedirs(self.vkbasalt_path, exist_ok=True)
 
@@ -33,10 +37,14 @@ class Plugin:
     async def check_reshade_path(self) -> dict:
         path = Path(os.path.expanduser("~/.local/share/reshade"))
         marker_file = path / ".installed"
-        return {"exists": marker_file.exists()}
+        addon_marker = path / ".installed_addon"
+        return {
+            "exists": marker_file.exists() or addon_marker.exists(),
+            "is_addon": addon_marker.exists()
+        }
 
     async def check_vkbasalt_path(self) -> dict:
-        marker_file = Path(self.vkbasalt_path) / ".installed"
+        marker_file = Path(self.vkbasalt_base_path) / ".installed"
         return {"exists": marker_file.exists()}
 
     def _find_game_path(self, appid: str) -> str:
@@ -129,7 +137,7 @@ class Plugin:
 
         raise ValueError(f"Could not find installation directory for AppID: {appid}")
 
-    async def run_install_reshade(self) -> dict:
+    async def run_install_reshade(self, with_addon: bool = False) -> dict:
         try:
             assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
             script_path = assets_dir / "reshade-install.sh"
@@ -138,10 +146,25 @@ class Plugin:
                 decky.logger.error(f"Install script not found: {script_path}")
                 return {"status": "error", "message": "Install script not found"}
 
+            # Create a new environment dictionary for this installation
+            install_env = self.environment.copy()
+            
+            # Explicitly set RESHADE_ADDON_SUPPORT based on the with_addon parameter
+            install_env['RESHADE_ADDON_SUPPORT'] = '1' if with_addon else '0'
+            
+            # Add other necessary environment variables
+            install_env.update({
+                'LD_LIBRARY_PATH': '/usr/lib',
+                'XDG_DATA_HOME': os.path.expandvars('$HOME/.local/share')
+            })
+
+            decky.logger.info(f"Installing ReShade with addon support: {with_addon}")
+            decky.logger.info(f"Environment: {install_env}")
+
             process = subprocess.run(
                 ["/bin/bash", str(script_path)],
                 cwd=str(assets_dir),
-                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib'},
+                env={**os.environ, **install_env},
                 capture_output=True,
                 text=True,
                 timeout=300
@@ -154,11 +177,23 @@ class Plugin:
             if process.returncode != 0:
                 return {"status": "error", "message": process.stderr}
 
-            # Create installation marker
-            marker_file = Path(self.main_path) / ".installed"
+            # Create appropriate installation marker
+            if with_addon:
+                marker_file = Path(self.main_path) / ".installed_addon"
+                # Remove non-addon marker if it exists
+                normal_marker = Path(self.main_path) / ".installed"
+                if normal_marker.exists():
+                    normal_marker.unlink()
+            else:
+                marker_file = Path(self.main_path) / ".installed"
+                # Remove addon marker if it exists
+                addon_marker = Path(self.main_path) / ".installed_addon"
+                if addon_marker.exists():
+                    addon_marker.unlink()
+
             marker_file.touch()
 
-            return {"status": "success", "output": "ReShade installed successfully!"}
+            return {"status": "success", "output": f"ReShade installed successfully!{'(with Addon Support)' if with_addon else ''}"}
         except Exception as e:
             decky.logger.error(f"Install error: {str(e)}")
             return {"status": "error", "message": str(e)}
@@ -175,10 +210,9 @@ class Plugin:
             process = subprocess.run(
                 ["/bin/bash", str(script_path)],
                 cwd=str(assets_dir),
-                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib'},
+                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib', 'VKBASALT_PATH': self.vkbasalt_path},
                 capture_output=True,
-                text=True,
-                timeout=300
+                text=True
             )
 
             decky.logger.info(f"VkBasalt install output:\n{process.stdout}")
@@ -188,7 +222,7 @@ class Plugin:
             if process.returncode != 0:
                 return {"status": "error", "message": process.stderr}
 
-            marker_file = Path(self.vkbasalt_path) / ".installed"
+            marker_file = Path(self.vkbasalt_base_path) / ".installed"
             marker_file.touch()
             
             return {"status": "success", "output": "VkBasalt installed successfully!"}
@@ -236,7 +270,7 @@ class Plugin:
             process = subprocess.run(
                 ["/bin/bash", str(script_path)],
                 cwd=str(assets_dir),
-                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib'},
+                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib', 'VKBASALT_PATH': self.vkbasalt_path},
                 capture_output=True,
                 text=True
             )
@@ -244,10 +278,10 @@ class Plugin:
             if process.returncode != 0:
                 return {"status": "error", "message": process.stderr}
 
-            marker_file = Path(self.vkbasalt_path) / ".installed"
+            marker_file = Path(self.vkbasalt_base_path) / ".installed"
             if marker_file.exists():
                 marker_file.unlink()
-                
+                    
             return {"status": "success", "output": "VkBasalt uninstalled"}
         except Exception as e:
             decky.logger.error(str(e))
