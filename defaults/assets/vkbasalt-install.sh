@@ -3,9 +3,8 @@ set -eo pipefail
 
 # Configuration
 XDG_DATA_HOME=${XDG_DATA_HOME:-"$HOME/.local/share"}
-MAIN_PATH=${MAIN_PATH:-"$XDG_DATA_HOME/reshade"}
-VKBASALT_PATH="$MAIN_PATH/vkbasalt"
-VKBASALT_URL="https://raw.githubusercontent.com/DadSchoorse/vkBasalt/master/config/vkBasalt.json"
+VKBASALT_PATH=${VKBASALT_PATH:-"$XDG_DATA_HOME/vkbasalt/installation"}
+VKBASALT_BASE=${VKBASALT_PATH%/*}  # Parent directory of installation
 RESHADE_REPO="https://github.com/gripped/vkBasalt-working-reshade-shaders.git"
 RESHADE_BRANCH="master"
 RESHADE_PATH="allshaders/reshade-shaders-working"
@@ -84,8 +83,8 @@ EOL
     # Cleanup
     rm -f "${vkbasalt_pkg}" "${vkbasalt_lib32_pkg}"
 
-    # Create installation marker
-    touch "$VKBASALT_PATH/.installed"
+    # Create installation marker in the base directory
+    touch "$VKBASALT_BASE/.installed"
     log_message "VkBasalt installation complete"
 }
 
