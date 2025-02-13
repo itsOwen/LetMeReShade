@@ -10,6 +10,7 @@ import {
 } from "@decky/ui";
 import { definePlugin, callable } from "@decky/api";
 import { IoMdColorPalette } from "react-icons/io";
+import ManualPatchSection from "./ManualPatchSection";
 
 interface InstallResult {
   status: string;
@@ -560,6 +561,7 @@ export default definePlugin(() => ({
       <ReShadeInstallerSection />
       <VkBasaltInstallerSection />
       <InstalledGamesSection />
+      <ManualPatchSection />
     </>
   ),
   icon: <IoMdColorPalette />,
