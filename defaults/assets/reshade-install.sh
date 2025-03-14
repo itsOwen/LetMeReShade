@@ -1,3 +1,5 @@
+#!/bin/bash
+
 SEPERATOR="------------------------------------------------------------------------------------------------"
 COMMON_OVERRIDES="d3d8 d3d9 d3d11 ddraw dinput8 dxgi opengl32"
 REQUIRED_EXECUTABLES="7z curl git grep"
@@ -130,6 +132,8 @@ get_latest_version() {
     local version_regex="[0-9][0-9.]*[0-9]"
     [[ $addon_support -eq 1 ]] && version_regex="${version_regex}_Addon"
     
+    log_message "Checking for version with addon_support=$addon_support"
+    
     html=$(curl --max-time 10 -sL "$RESHADE_URL")
     if [[ $? != 0 || $html =~ '<h2>Something went wrong.</h2>' ]]; then
         log_message "Trying alternate URL..."
@@ -142,15 +146,17 @@ get_latest_version() {
         exit 1
     fi
     
+    log_message "Found download link: $download_link"
     echo "$download_link"
 }
 
 download_reshade() {
     local version=$1
     local url=$2
+    local addon_support=${3:-0}
     createTempDir
     
-    log_message "Downloading ReShade version $version..."
+    log_message "Downloading ReShade version $version (addon_support=$addon_support)..."
     curl -sLO "$url" || {
         log_message "Failed to download ReShade"
         removeTempDir
@@ -173,6 +179,11 @@ download_reshade() {
     # Create latest symlink and version file
     ln -sfn "$target_dir" "$RESHADE_PATH/latest"
     echo "$version" > "$RESHADE_PATH/LVERS"
+    
+    # Create version indicator file
+    if [[ $addon_support -eq 1 ]]; then
+        touch "$target_dir/addon_version"
+    fi
 }
 
 setup_reshade_ini() {
@@ -203,15 +214,20 @@ main() {
     fi
     [[ $UPDATE_RESHADE == 1 ]] && date +%s > "$MAIN_PATH/LASTUPDATED"
     
+    # Ensure RESHADE_ADDON_SUPPORT is properly set
+    RESHADE_ADDON_SUPPORT=${RESHADE_ADDON_SUPPORT:-0}
+    log_message "Installing with addon support: $RESHADE_ADDON_SUPPORT"
+    
     # Download/Update ReShade
     if [[ $RESHADE_VERSION == "latest" ]]; then
         local download_link=$(get_latest_version $RESHADE_ADDON_SUPPORT)
         local version=$(echo "$download_link" | grep -o "[0-9][0-9.]*[0-9]")
+        [[ $RESHADE_ADDON_SUPPORT -eq 1 ]] && version="${version}_Addon"
         [[ $download_link =~ ^/ ]] && download_link="${RESHADE_URL}${download_link}"
-        download_reshade "$version" "$download_link"
+        download_reshade "$version" "$download_link" $RESHADE_ADDON_SUPPORT
     else
         [[ $RESHADE_ADDON_SUPPORT -eq 1 ]] && RESHADE_VERSION="${RESHADE_VERSION}_Addon"
-        download_reshade "$RESHADE_VERSION" "$RESHADE_URL/downloads/ReShade_Setup_$RESHADE_VERSION.exe"
+        download_reshade "$RESHADE_VERSION" "$RESHADE_URL/downloads/ReShade_Setup_$RESHADE_VERSION.exe" $RESHADE_ADDON_SUPPORT
     fi
     
     # Download components
@@ -223,6 +239,11 @@ main() {
     echo -e "$SEPERATOR\nReShade installation completed successfully"
     echo "Shaders installed to: $MAIN_PATH/ReShade_shaders"
     [[ -f "$MAIN_PATH/$GLOBAL_INI" ]] && echo "ReShade.ini created at: $MAIN_PATH/$GLOBAL_INI"
+    if [[ $RESHADE_ADDON_SUPPORT -eq 1 ]]; then
+        echo "Installed with addon support"
+    else
+        echo "Installed without addon support"
+    fi
 }
 
 main "$@"
