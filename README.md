@@ -84,6 +84,22 @@ DELETE_RESHADE_FILES=0
 3. **Performance issues**
    - Disable resource-intensive shaders.
    - Ensure you are using the latest version.
+  
+## Manual Patching
+
+So here is a guide to using manual patching of ReShade, since the plugin doesn't work on Stardew Valley out of the box.  I checked the game folder and found that it downloads the Linux version of Stardew Valley on the Steam Deck.  Here's what I did:
+
+I was able to run ReShade on Stardew Valley on my Steam Deck (Steam game).
+
+Here's what you need to do:
+
+1. Install the latest version of my LetMeReShade plugin.
+2. Uninstall Stardew Valley.
+3. Go to Stardew Valley's properties/compatibility and check "Force Compatibility" and select Proton Experimental.
+4. Now the Windows version of the game will be installed.
+5. Now open LetMeReShade, and below you will see "Manual Patching." Select the game, select the DLL (OpenGL), click "Apply Patch," and confirm. (I found out from a Youtube video that I need openGL instead of DX so I will recommend you to watch some youtube videos if the reshade isn't working for you)
+6. Now download Fadedew and place it in the Stardew Valley folder.
+7. Now enjoy.
 
 ## 📝 Contributing
 
