@@ -3,35 +3,70 @@
 [![Decky Plugin](https://img.shields.io/badge/Decky-Plugin-brightgreen.svg)](https://github.com/SteamDeckHomebrew/decky-loader)
 [![License](https://img.shields.io/badge/license-BSD--3-blue.svg)](LICENSE)
 
-> Transform your Steam Deck gaming experience with advanced shader customization and graphics enhancements! 🚀
+> Ultimate Steam Deck graphics enhancement suite with advanced shader customization and Vulkan support via VkBasalt!
 
 ![LetMeReShade Banner](assets/shade.jpg)
 
 ## 🌟 Features
 
-- 🎨 Easy ReShade installation and management
-- 🎯 One-click game-specific shader application
-- 🔄 Seamless shader updates and synchronization
-- 💾 Global preset management
-- 🎮 Compatible with most Steam games
-- 🔍 Automatic game detection and configuration
+- **Dual Enhancement Engines**
+  - 🎨 **ReShade** (DirectX/OpenGL)
+  - ⚡ **VkBasalt** (Vulkan)
+- One-click installation and management
+- Automatic game detection and configuration
+- Manual DLL Patching
+- Global preset management and custom shader support
+- In-game overlay accessible via the **HOME** key
+- Steam Deck–optimized configurations
 
 ## 📋 Prerequisites
 
-- Decky Loader installed on your Steam Deck
-- An internet connection for initial setup and shader downloads
-- Some free space for shader storage
+- **Decky Loader** installed on your Steam Deck
+- A stable internet connection (for initial setup and shader downloads)
+- Adequate storage for shaders (500MB+ recommended)
+- A SteamOS-based system (or compatible variants like Bazzite/ChamiraOS)
 
 ## 🚀 Installation
 
-**Note:** ReShade conflicts with FGMOD as both use some of the same DLL files. I might be able to implement a workaround, but for now, you must choose between them. If you want to use FGMOD, uninstall/unpatch the game from the ReShade plugin (which will remove all ReShade files), then patch the game using FGMOD. To switch back to ReShade, reverse the process.
+### ReShade Installation
 
-### Installation Steps
+1. **Download the Latest Release:**  
+   Grab the latest version from the releases section.
+2. **Extract Files:**  
+   Unzip the archive and place the contents into `homebrew/plugins/<LetMeReShade-folder>`.
+3. **Restart Your Steam Deck:**  
+   This completes the installation.
+4. **Note on Conflicts:**  
+   ReShade conflicts with FGMOD (due to shared DLL files). To switch, uninstall or unpatch one before enabling the other.
 
-1. Download the latest release.
-2. Extract the files to `homebrew/plugins/(foldername)`.
-3. Restart your Steam Deck.
-4. Done! Enjoy your enhanced graphics!
+### VkBasalt Configuration
+
+1. **Configure VkBasalt:**  
+   Edit (or create) the `vkBasalt.conf` file, usually located at `~/.config/vkBasalt/vkBasalt.conf`, with the following settings:
+   ```conf
+   # Enable effects (comma-separated)
+   effects = cas:denoise
+
+   # Path configurations
+   reshade_effect_paths = path here
+   reshade_texture_paths = path here
+   reshade_include_paths = path here
+
+   # Effect parameters
+   [cas]
+   sharpness = 0.65
+
+   [denoise]
+   radius = 2
+   ```
+2. **Custom Shader Placement:**  
+   - **For ReShade:** Place `.fx` files in `~/.local/share/reshade/shaders/`.
+   - **For VkBasalt:** Place `.fx` files in `~/.config/reshade/Shaders/`.
+3. **Adding Custom Effects:**  
+   Append your custom shader names (without the `.fx` extension) to the `effects` line:
+   ```conf
+   effects = your_custom_effect
+   ```
 
 ## 📷 Video Guide
 
@@ -41,64 +76,61 @@
 
 ### Initial Setup
 
-1. Open the Quick Access Menu.
-2. Navigate to the LetMeReShade plugin.
-3. Click "Install ReShade" to set up the base components.
-
-### Adding ReShade to Games
-
-1. Select a game from your library within the plugin interface.
-2. Click "Install ReShade" next to the game.
-3. Wait for the installation to complete.
-4. Launch your game and press **HOME** to access the ReShade overlay.
-
-## ⚙️ Advanced Configuration
-
-The plugin supports various advanced settings:
-
-```bash
-# Environment Variables (automatically managed)
-XDG_DATA_HOME=~/.local/share
-UPDATE_RESHADE=1
-MERGE_SHADERS=1
-VULKAN_SUPPORT=0
-GLOBAL_INI=ReShade.ini
-DELETE_RESHADE_FILES=0
-```
+1. **Access the Plugin:**  
+   Open the Quick Access Menu and navigate to the LetMeReShade plugin.
+2. **Select Engine:**  
+   Choose the appropriate installation based on your game:
+   - Click **"Install ReShade"** for DirectX/OpenGL titles.
+   - Click **"Install VkBasalt"** for Vulkan-based games.
+3. **Overlay Access:**  
+   Launch your game and press the **HOME** key to access the in-game overlay for shader adjustments.
 
 ## 🔧 Troubleshooting
 
 ### Common Issues
 
-1. **ReShade overlay not appearing**
-   - Verify the correct DLL override is selected.
-   - Check if the HOME key is properly mapped.
-   - Ensure launch options are correctly set.
-   - Confirm that the game supports ReShade.
+1. **Overlay Not Appearing**
+   - Verify that the correct DLL override is selected (for ReShade) or that Vulkan launch settings are properly configured (for VkBasalt).
+   - VkBasalt doesn't have a menu like ReShade.
+   - Confirm the **HOME** key is correctly mapped.
+   - Ensure that the game supports the selected enhancement engine.
 
-2. **Game crashes on launch**
-   - Try a different DLL override (manual patching options will be added soon).
-   - Verify shader compatibility.
-   - Check the game's compatibility with ReShade.
+2. **Game Crashes on Launch**
+   - Try using an alternative DLL override (manual patching options coming soon).
+   - Check shader compatibility and game support for ReShade or VkBasalt.
 
-3. **Performance issues**
+3. **Performance Issues**
    - Disable resource-intensive shaders.
-   - Ensure you are using the latest version.
+   - Confirm you are running the latest version of the plugin and shader repositories.
+
+## Manual Patching
+
+So here is a guide to using manual patching of ReShade, since the plugin doesn't work on Stardew Valley out of the box.  I checked the game folder and found that it downloads the Linux version of Stardew Valley on the Steam Deck.  Here's what I did:
+
+I was able to run ReShade on Stardew Valley on my Steam Deck (Steam game).
+
+Here's what you need to do:
+
+1. Install the latest version of my LetMeReShade plugin.
+2. Uninstall Stardew Valley.
+3. Go to Stardew Valley's properties/compatibility and check "Force Compatibility" and select Proton Experimental.
+4. Now the Windows version of the game will be installed.
+5. Now open LetMeReShade, and below you will see "Manual Patching." Select the game, select the DLL (OpenGL), click "Apply Patch," and confirm. (I found out from a Youtube video that I need openGL instead of DX so I will recommend you to watch some youtube videos if the reshade isn't working for you)
+6. Now download Fadedew and place it in the Stardew Valley folder.
+7. Now enjoy.
 
 ## 📝 Contributing
 
 We welcome contributions! Feel free to:
-
 - Report bugs
-- Suggest features
+- Suggest new features
 - Submit pull requests
 - Share shader presets
 
 ## 🔄 Updates
 
 The plugin automatically checks for:
-
-- ReShade updates
+- ReShade and VkBasalt updates
 - New shader repositories
 - Plugin updates
 
@@ -109,16 +141,16 @@ This project is licensed under the BSD-3-Clause License. See the [LICENSE](LICEN
 ## 🙏 Acknowledgments
 
 - **ZigmA** for inspiring this plugin and assisting with testing.
-- **xXJSONDeruloXx** for his brilliant plugin, *Decky Framegen*, which serves as the foundation for this plugin.
-- **kevinlekiller** for his *reshade-steam-proton* repository.
+- **xXJSONDeruloXx** for the *Decky Framegen* plugin, which laid the foundation for this project.
+- **kevinlekiller** for the *reshade-steam-proton* repository.
+- **DadSchoorse** for vkBasalt repository.
 
 ## 📞 Support
 
 For assistance:
-
-1. Check the troubleshooting guide.
+1. Review the troubleshooting guide.
 2. Search existing issues.
-3. Create a new issue if needed.
+3. Open a new issue if you need further help.
 
 ---
 

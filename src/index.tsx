@@ -3,10 +3,14 @@ import {
   PanelSection,
   PanelSectionRow,
   ButtonItem,
-  DropdownItem
+  DropdownItem,
+  ToggleField,
+  ConfirmModal,
+  showModal
 } from "@decky/ui";
 import { definePlugin, callable } from "@decky/api";
 import { IoMdColorPalette } from "react-icons/io";
+import ManualPatchSection from "./ManualPatchSection";
 
 interface InstallResult {
   status: string;
@@ -27,6 +31,7 @@ interface ReShadeResponse {
 
 interface PathCheckResponse {
   exists: boolean;
+  is_addon: boolean;
 }
 
 interface GameListResponse {
@@ -34,14 +39,224 @@ interface GameListResponse {
   games: GameInfo[];
 }
 
-const runInstallReShade = callable<[], ReShadeResponse>("run_install_reshade");
+const runInstallReShade = callable<[boolean], ReShadeResponse>("run_install_reshade");
 const runUninstallReShade = callable<[], ReShadeResponse>("run_uninstall_reshade");
 const manageGameReShade = callable<[string, string, string], ReShadeResponse>("manage_game_reshade");
 const checkReShadePath = callable<[], PathCheckResponse>("check_reshade_path");
 const listInstalledGames = callable<[], GameListResponse>("list_installed_games");
 const logError = callable<[string], void>("log_error");
 
+// VkBasalt callables
+const checkVkBasaltPath = callable<[], PathCheckResponse>("check_vkbasalt_path");
+const runInstallVkBasalt = callable<[], ReShadeResponse>("run_install_vkbasalt");
+const runUninstallVkBasalt = callable<[], ReShadeResponse>("run_uninstall_vkbasalt");
+
 function ReShadeInstallerSection() {
+  const [installing, setInstalling] = useState<boolean>(false);
+  const [uninstalling, setUninstalling] = useState<boolean>(false);
+  const [installResult, setInstallResult] = useState<InstallResult | null>(null);
+  const [uninstallResult, setUninstallResult] = useState<InstallResult | null>(null);
+  const [pathExists, setPathExists] = useState<boolean | null>(null);
+  const [isAddon, setIsAddon] = useState<boolean>(false);
+  const [addonEnabled, setAddonEnabled] = useState<boolean>(false);
+  const [initialLoad, setInitialLoad] = useState<boolean>(true);
+  const [showingAddonDialog, setShowingAddonDialog] = useState<boolean>(false);
+  const [pendingAddonState, setPendingAddonState] = useState<boolean>(false);
+
+  useEffect(() => {
+    const checkPath = async () => {
+      try {
+        const result = await checkReShadePath();
+        setPathExists(result.exists);
+        setIsAddon(result.is_addon);
+
+        if (initialLoad) {
+          setAddonEnabled(result.is_addon);
+          setInitialLoad(false);
+        }
+      } catch (e) {
+        await logError(`useEffect -> checkPath: ${String(e)}`);
+      }
+    };
+    checkPath();
+    const intervalId = setInterval(checkPath, 3000);
+    return () => clearInterval(intervalId);
+  }, [initialLoad]);
+
+  useEffect(() => {
+    if (installResult) {
+      const timer = setTimeout(() => setInstallResult(null), 5000);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [installResult]);
+
+  useEffect(() => {
+    if (uninstallResult) {
+      const timer = setTimeout(() => setUninstallResult(null), 5000);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [uninstallResult]);
+
+  const handleInstallClick = async () => {
+    try {
+      setInstalling(true);
+      const result = await runInstallReShade(addonEnabled);
+      setInstallResult(result);
+    } catch (e) {
+      setInstallResult({ status: "error", message: String(e) });
+      await logError(`Install error: ${String(e)}`);
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const handleUninstallClick = async () => {
+    try {
+      setUninstalling(true);
+      const result = await runUninstallReShade();
+      setUninstallResult(result);
+      setAddonEnabled(false);
+    } catch (e) {
+      setUninstallResult({ status: "error", message: String(e) });
+      await logError(`Uninstall error: ${String(e)}`);
+    } finally {
+      setUninstalling(false);
+    }
+  };
+
+  const handleAddonToggle = () => {
+    if (!addonEnabled) {
+      setShowingAddonDialog(true);
+      setPendingAddonState(true);
+      showModal(
+        <ConfirmModal
+          strTitle="Enable ReShade Addon Support?"
+          strDescription={
+            "Using ReShade with addon support is generally not recommended when playing online multiplayer games with anti-cheat systems, as the addon functionality can trigger anti-cheat detection due to its potential for modification beyond just visual post-processing, which could be interpreted as cheating; most anti-cheat systems only whitelist the basic ReShade functionality with limited addons support."
+          }
+          strOKButtonText="Enable Anyway"
+          strCancelButtonText="Cancel"
+          onOK={() => {
+            setAddonEnabled(true);
+            setShowingAddonDialog(false);
+            setPendingAddonState(false);
+          }}
+          onCancel={() => {
+            setShowingAddonDialog(false);
+            setPendingAddonState(false);
+          }}
+        />
+      );
+    } else {
+      setAddonEnabled(false);
+    }
+  };
+
+  return (
+    <PanelSection title="ReShade Management">
+      {pathExists !== null && (
+        <PanelSectionRow>
+          <div style={{ color: pathExists ? "green" : "red" }}>
+            {pathExists ? `🟢 ReShade Is Installed${isAddon ? " (with Addon Support)" : ""}` : "🔴 ReShade Not Installed"}
+          </div>
+        </PanelSectionRow>
+      )}
+
+      {pathExists === false && (
+        <>
+          <PanelSectionRow>
+            <ToggleField
+              label="Enable Addon Support"
+              description="Install ReShade with addon support"
+              checked={showingAddonDialog ? pendingAddonState : addonEnabled}
+              onChange={handleAddonToggle}
+              disabled={showingAddonDialog}
+            />
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem layout="below" onClick={handleInstallClick} disabled={installing}>
+              {installing ? "Installing..." : `🔧 Install ReShade${addonEnabled ? " with Addon Support" : ""}`}
+            </ButtonItem>
+          </PanelSectionRow>
+        </>
+      )}
+
+      {pathExists === true && (
+        <>
+          {isAddon !== addonEnabled && (
+            <PanelSectionRow>
+              <div style={{
+                padding: '12px',
+                marginBottom: '12px',
+                backgroundColor: 'var(--decky-warning)',
+                borderRadius: '4px',
+                color: 'white'
+              }}>
+                ⚠️ {addonEnabled ? "Addon support requires reinstallation" : "Switching to non-addon version requires reinstallation"}
+              </div>
+            </PanelSectionRow>
+          )}
+          <PanelSectionRow>
+            <ToggleField
+              label="Enable Addon Support"
+              description="Changes require reinstallation"
+              checked={showingAddonDialog ? pendingAddonState : addonEnabled}
+              onChange={handleAddonToggle}
+              disabled={showingAddonDialog}
+            />
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem layout="below" onClick={handleUninstallClick} disabled={uninstalling}>
+              {uninstalling ? "Uninstalling..." : "🗑️ Uninstall ReShade"}
+            </ButtonItem>
+          </PanelSectionRow>
+        </>
+      )}
+
+      {installResult && (
+        <PanelSectionRow>
+          <div style={{
+            padding: '12px',
+            marginTop: '16px',
+            backgroundColor: 'var(--decky-selected-ui-bg)',
+            borderRadius: '4px',
+            color: installResult.status === "success" ? "green" : "red"
+          }}>
+            {installResult.status === "success" ?
+              "✅ ReShade installed successfully!" :
+              `❌ Error: ${installResult.message || "Installation failed"}`}
+          </div>
+        </PanelSectionRow>
+      )}
+
+      {uninstallResult && (
+        <PanelSectionRow>
+          <div style={{
+            padding: '12px',
+            marginTop: '16px',
+            backgroundColor: 'var(--decky-selected-ui-bg)',
+            borderRadius: '4px',
+            color: uninstallResult.status === "success" ? "green" : "red"
+          }}>
+            {uninstallResult.status === "success" ?
+              "✅ ReShade uninstalled successfully!" :
+              `❌ Error: ${uninstallResult.message || "Uninstallation failed"}`}
+          </div>
+        </PanelSectionRow>
+      )}
+
+      <PanelSectionRow>
+        <div>
+          Press HOME key in-game to access the ReShade overlay.
+        </div>
+      </PanelSectionRow>
+    </PanelSection>
+  );
+}
+
+function VkBasaltInstallerSection() {
   const [installing, setInstalling] = useState<boolean>(false);
   const [uninstalling, setUninstalling] = useState<boolean>(false);
   const [installResult, setInstallResult] = useState<InstallResult | null>(null);
@@ -51,10 +266,10 @@ function ReShadeInstallerSection() {
   useEffect(() => {
     const checkPath = async () => {
       try {
-        const result = await checkReShadePath();
+        const result = await checkVkBasaltPath();
         setPathExists(result.exists);
       } catch (e) {
-        await logError(`useEffect -> checkPath: ${String(e)}`);
+        await logError(`VkBasalt useEffect -> checkPath: ${String(e)}`);
       }
     };
     checkPath();
@@ -81,11 +296,11 @@ function ReShadeInstallerSection() {
   const handleInstallClick = async () => {
     try {
       setInstalling(true);
-      const result = await runInstallReShade();
+      const result = await runInstallVkBasalt();
       setInstallResult(result);
     } catch (e) {
       setInstallResult({ status: "error", message: String(e) });
-      await logError(`Install error: ${String(e)}`);
+      await logError(`VkBasalt Install error: ${String(e)}`);
     } finally {
       setInstalling(false);
     }
@@ -94,22 +309,22 @@ function ReShadeInstallerSection() {
   const handleUninstallClick = async () => {
     try {
       setUninstalling(true);
-      const result = await runUninstallReShade();
+      const result = await runUninstallVkBasalt();
       setUninstallResult(result);
     } catch (e) {
       setUninstallResult({ status: "error", message: String(e) });
-      await logError(`Uninstall error: ${String(e)}`);
+      await logError(`VkBasalt Uninstall error: ${String(e)}`);
     } finally {
       setUninstalling(false);
     }
   };
 
   return (
-    <PanelSection>
+    <PanelSection title="VkBasalt Management">
       {pathExists !== null && (
         <PanelSectionRow>
           <div style={{ color: pathExists ? "green" : "red" }}>
-            {pathExists ? "ReShade Is Installed" : "ReShade Not Installed"}
+            {pathExists ? "🟢 VkBasalt Is Installed" : "🔴 VkBasalt Not Installed"}
           </div>
         </PanelSectionRow>
       )}
@@ -117,7 +332,7 @@ function ReShadeInstallerSection() {
       {pathExists === false && (
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={handleInstallClick} disabled={installing}>
-            {installing ? "Installing..." : "🔧 Install ReShade"}
+            {installing ? "Installing..." : "🔧 Install VkBasalt"}
           </ButtonItem>
         </PanelSectionRow>
       )}
@@ -125,7 +340,7 @@ function ReShadeInstallerSection() {
       {pathExists === true && (
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={handleUninstallClick} disabled={uninstalling}>
-            {uninstalling ? "Uninstalling..." : "🗑️ Uninstall ReShade"}
+            {uninstalling ? "Uninstalling..." : "🗑️ Uninstall VkBasalt"}
           </ButtonItem>
         </PanelSectionRow>
       )}
@@ -139,8 +354,8 @@ function ReShadeInstallerSection() {
             borderRadius: '4px',
             color: installResult.status === "success" ? "green" : "red"
           }}>
-            {installResult.status === "success" ? 
-              "✅ ReShade installed successfully!" : 
+            {installResult.status === "success" ?
+              "✅ VkBasalt installed successfully!" :
               `❌ Error: ${installResult.message || "Installation failed"}`}
           </div>
         </PanelSectionRow>
@@ -155,30 +370,19 @@ function ReShadeInstallerSection() {
             borderRadius: '4px',
             color: uninstallResult.status === "success" ? "green" : "red"
           }}>
-            {uninstallResult.status === "success" ? 
-              "✅ ReShade uninstalled successfully!" : 
+            {uninstallResult.status === "success" ?
+              "✅ VkBasalt uninstalled successfully!" :
               `❌ Error: ${uninstallResult.message || "Uninstallation failed"}`}
           </div>
         </PanelSectionRow>
       )}
-
-      <PanelSectionRow>
-        <div>
-          Press HOME key in-game to access the ReShade overlay.
-        </div>
-      </PanelSectionRow>
     </PanelSection>
   );
 }
 
-interface ProcessedGameInfo {
-  appid: number;
-  name: string;
-}
-
 function InstalledGamesSection() {
-  const [games, setGames] = useState<ProcessedGameInfo[]>([]);
-  const [selectedGame, setSelectedGame] = useState<ProcessedGameInfo | null>(null);
+  const [games, setGames] = useState<{ appid: number; name: string }[]>([]);
+  const [selectedGame, setSelectedGame] = useState<{ appid: number; name: string } | null>(null);
   const [result, setResult] = useState<string>('');
 
   useEffect(() => {
@@ -237,6 +441,25 @@ function InstalledGamesSection() {
     }
   };
 
+  const handleVkBasaltPatch = async () => {
+    if (!selectedGame) return;
+
+    try {
+      const vkbasaltCheck = await checkVkBasaltPath();
+      if (!vkbasaltCheck.exists) {
+        setResult("Please install VkBasalt first before patching games.");
+        return;
+      }
+
+      await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, 'ENABLE_VKBASALT=1 %command%');
+      setResult(`VkBasalt enabled for ${selectedGame.name}.\nPress Home key in-game to toggle effects.\nPlease follow the guide on GitHub or available YouTube videos for configuring VkBasalt settings and effects.`);
+
+    } catch (error) {
+      await logError(`handleVkBasaltPatch: ${String(error)}`);
+      setResult(`Error enabling VkBasalt: ${String(error)}`);
+    }
+  };
+
   const handleUnpatchClick = async () => {
     if (!selectedGame) return;
 
@@ -255,7 +478,7 @@ function InstalledGamesSection() {
 
       if (response.status === "success") {
         await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, '');
-        setResult(`ReShade removed successfully from ${selectedGame.name}`);
+        setResult(`ReShade and VkBasalt removed successfully from ${selectedGame.name}`);
       } else {
         setResult(`Failed to remove ReShade: ${response.message || 'Unknown error'}`);
       }
@@ -266,7 +489,7 @@ function InstalledGamesSection() {
   };
 
   return (
-    <PanelSection title="Select a game to patch:">
+    <PanelSection title="Install Patch in Game">
       <PanelSectionRow>
         <DropdownItem
           rgOptions={games.map(game => ({
@@ -310,9 +533,17 @@ function InstalledGamesSection() {
           <PanelSectionRow>
             <ButtonItem
               layout="below"
+              onClick={handleVkBasaltPatch}
+            >
+              🎨 Enable VkBasalt
+            </ButtonItem>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
               onClick={handleUnpatchClick}
             >
-              🗑️ Remove ReShade
+              🗑️ Remove ReShade/VkBasalt
             </ButtonItem>
           </PanelSectionRow>
         </>
@@ -323,16 +554,18 @@ function InstalledGamesSection() {
 
 export default definePlugin(() => ({
   name: "LetMeReShade Plugin",
-  titleView: <div>ReShade Manager</div>,
+  titleView: <div>LetMeReShade Manager</div>,
   alwaysRender: true,
   content: (
     <>
       <ReShadeInstallerSection />
+      <VkBasaltInstallerSection />
       <InstalledGamesSection />
+      <ManualPatchSection />
     </>
   ),
   icon: <IoMdColorPalette />,
   onDismount() {
-    console.log("ReShade Plugin unmounted");
+    console.log("Plugin unmounted");
   },
 }));
