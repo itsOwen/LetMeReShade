@@ -11,6 +11,7 @@ import {
 import { definePlugin, callable } from "@decky/api";
 import { IoMdColorPalette } from "react-icons/io";
 import ManualPatchSection from "./ManualPatchSection";
+import NonSteamManager from "./NonSteamManager";
 
 interface InstallResult {
   status: string;
@@ -561,6 +562,7 @@ export default definePlugin(() => ({
       <ReShadeInstallerSection />
       <VkBasaltInstallerSection />
       <InstalledGamesSection />
+      <NonSteamManager />
       <ManualPatchSection />
     </>
   ),

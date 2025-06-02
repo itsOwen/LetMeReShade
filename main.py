@@ -2,7 +2,11 @@ import decky
 import os
 import subprocess
 import shutil
+import json
+import asyncio
+import glob
 from pathlib import Path
+from typing import Dict, List, Optional
 
 class Plugin:
     def __init__(self):
@@ -360,3 +364,162 @@ class Plugin:
 
     async def log_error(self, error: str) -> None:
         decky.logger.error(f"FRONTEND: {error}")
+
+    # NEW NON-STEAM GAME METHODS
+    async def scan_non_steam_games(self) -> dict:
+        """Scan all supported launchers for games using Python"""
+        import glob
+        
+        games = []
+        
+        # Define search paths
+        search_paths = {
+            "Heroic": [
+                Path.home() / "Games" / "Heroic",
+                Path("/mnt") / "*" / "Games" / "Heroic",
+            ],
+            "Lutris": [
+                Path.home() / "Games",
+                Path.home() / ".local" / "share" / "lutris" / "games",
+            ],
+            "Bottles": [
+                Path.home() / ".var" / "app" / "com.usebottles.bottles" / "data" / "bottles" / "bottles",
+            ],
+            "NSL": [
+                Path.home() / ".local" / "share" / "Steam" / "steamapps" / "compatdata" / "NonSteamLaunchers" / "pfx" / "drive_c",
+            ]
+        }
+        
+        # Patterns to exclude
+        exclude_patterns = [
+            "unins", "setup", "install", "launcher", "updater", 
+            "crash", "report", "helper", "redis", "node", "python",
+            "UnityCrashHandler", "vcredist", "DirectX"
+        ]
+        
+        for launcher, paths in search_paths.items():
+            for base_path in paths:
+                # Handle glob patterns
+                if "*" in str(base_path):
+                    expanded_paths = glob.glob(str(base_path))
+                    for path in expanded_paths:
+                        self._scan_directory(Path(path), launcher, games, exclude_patterns)
+                elif base_path.exists():
+                    self._scan_directory(base_path, launcher, games, exclude_patterns)
+        
+        # Deduplicate
+        seen = set()
+        unique_games = []
+        for game in games:
+            if game['exe'] not in seen:
+                seen.add(game['exe'])
+                unique_games.append(game)
+        
+        return {"status": "success", "games": sorted(unique_games, key=lambda x: x['name'])}
+
+    def _scan_directory(self, directory: Path, launcher: str, games: list, exclude_patterns: list):
+        """Scan a directory for game executables"""
+        try:
+            # Find all .exe files up to 4 levels deep
+            for exe_path in directory.rglob("*.exe"):
+                # Skip if too deep
+                if len(exe_path.relative_to(directory).parts) > 4:
+                    continue
+                    
+                # Skip excluded patterns
+                exe_name = exe_path.stem.lower()
+                if any(pattern in exe_name for pattern in exclude_patterns):
+                    continue
+                
+                # Determine game name
+                game_dir = exe_path.parent
+                game_name = game_dir.name
+                
+                # For deeply nested exes, go up directories
+                if game_name in ["Binaries", "bin", "x64", "x86"]:
+                    game_name = game_dir.parent.name
+                
+                # Clean up game name
+                game_name = game_name.replace("_", " ").replace("-", " ")
+                
+                games.append({
+                    "name": game_name,
+                    "launcher": launcher,
+                    "path": str(game_dir),
+                    "exe": str(exe_path)
+                })
+                
+        except Exception as e:
+            decky.logger.error(f"Error scanning {directory}: {e}")
+
+    async def add_to_steam_with_reshade(self, game_info: dict) -> dict:
+        """Add non-Steam game to Steam with ReShade pre-configured"""
+        try:
+            decky.logger.info(f"Adding game to Steam: {game_info}")
+            
+            # First check if ReShade is installed
+            reshade_check = await self.check_reshade_path()
+            if not reshade_check['exists']:
+                return {"status": "error", "message": "Please install ReShade first"}
+            
+            # Install ReShade to game directory directly
+            assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
+            script_path = assets_dir / "reshade-game-manager.sh"
+            
+            if not script_path.exists():
+                return {"status": "error", "message": "ReShade game manager script not found"}
+            
+            # Make script executable
+            script_path.chmod(0o755)
+            
+            # Run the game manager script directly with the game path
+            process = subprocess.run(
+                ["/bin/bash", str(script_path), "install", game_info['path'], "dxgi"],
+                cwd=str(assets_dir),
+                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib'},
+                capture_output=True,
+                text=True
+            )
+            
+            decky.logger.info(f"ReShade install output: {process.stdout}")
+            if process.stderr:
+                decky.logger.error(f"ReShade install errors: {process.stderr}")
+            
+            if process.returncode != 0:
+                return {"status": "error", "message": f"Failed to install ReShade: {process.stderr}"}
+            
+            # Create Steam shortcut
+            shortcut_script_path = assets_dir / "steam-shortcut-creator.sh"
+            
+            if not shortcut_script_path.exists():
+                decky.logger.error(f"Shortcut creator script not found: {shortcut_script_path}")
+                return {"status": "error", "message": "Steam shortcut creator script not found"}
+            
+            # Make script executable
+            shortcut_script_path.chmod(0o755)
+            
+            # Run shortcut creator
+            process = subprocess.run(
+                ["/bin/bash", str(shortcut_script_path), 
+                game_info['name'],
+                game_info['exe'],
+                game_info['path']],
+                capture_output=True,
+                text=True
+            )
+            
+            decky.logger.info(f"Shortcut creator output: {process.stdout}")
+            if process.stderr:
+                decky.logger.error(f"Shortcut creator errors: {process.stderr}")
+            
+            if process.returncode != 0:
+                return {"status": "error", "message": f"Failed to create shortcut: {process.stderr}"}
+            
+            return {
+                "status": "success",
+                "message": "Game added to Steam with ReShade! Restart Steam to see the shortcut."
+            }
+            
+        except Exception as e:
+            decky.logger.error(f"Error adding to Steam: {e}")
+            return {"status": "error", "message": str(e)}
