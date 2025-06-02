@@ -1,0 +1,48 @@
+{
+  "launchers": {
+    "heroic": {
+      "config_paths": [
+        "~/.config/heroic/GamesConfig",
+        "~/.var/app/com.heroicgameslauncher.hgl/config/heroic/GamesConfig"
+      ],
+      "installed_file": "installed.json",
+      "game_pattern": "*.json"
+    },
+    "lutris": {
+      "config_paths": [
+        "~/.config/lutris/games",
+        "~/.local/share/lutris/games"
+      ],
+      "db_path": "~/.local/share/lutris/pga.db",
+      "game_pattern": "*.yml"
+    },
+    "bottles": {
+      "config_paths": [
+        "~/.var/app/com.usebottles.bottles/data/bottles/bottles",
+        "~/.local/share/bottles/bottles"
+      ],
+      "game_pattern": "*/bottle.yml"
+    },
+    "nonsteamlaunchers": {
+      "install_path": "~/homebrew/plugins/NonSteamLaunchers",
+      "prefix_path": "~/.local/share/Steam/steamapps/compatdata/NonSteamLaunchers/pfx/drive_c",
+      "launchers": [
+        {
+          "name": "Epic Games",
+          "exe_pattern": "**/EpicGamesLauncher.exe",
+          "games_path": "Program Files/Epic Games"
+        },
+        {
+          "name": "EA App",
+          "exe_pattern": "**/EADesktop.exe",
+          "games_path": "Program Files/EA Games"
+        },
+        {
+          "name": "Battle.net",
+          "exe_pattern": "**/Battle.net.exe",
+          "games_path": "Program Files (x86)/Battle.net"
+        }
+      ]
+    }
+  }
+}
