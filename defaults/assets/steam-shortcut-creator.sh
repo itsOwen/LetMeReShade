@@ -12,7 +12,6 @@ if [[ -z "$STEAM_USER_ID" ]]; then
 fi
 
 SHORTCUTS_VDF="$HOME/.steam/steam/userdata/$STEAM_USER_ID/config/shortcuts.vdf"
-LOCALCONFIG="$HOME/.steam/steam/userdata/$STEAM_USER_ID/config/localconfig.vdf"
 
 # Detect architecture and DLL override
 cd "$GAME_DIR"
@@ -30,47 +29,11 @@ echo "Generated App ID: $APP_ID"
 # Create backup
 cp "$SHORTCUTS_VDF" "$SHORTCUTS_VDF.bak" 2>/dev/null || true
 
-# First, ensure Steam is not running
-if pgrep -x "steam" > /dev/null; then
-    echo "Steam is running. It will be closed to apply changes."
-    killall -q steam || true
-    sleep 2
-fi
-
-# Get available Proton version
-PROTON_VERSION=""
-STEAM_ROOT="$HOME/.steam/steam"
-COMPAT_TOOLS_DIR="$STEAM_ROOT/steamapps/common"
-
-# Check for Proton versions in order of preference
-for proton_dir in "Proton - Experimental" "Proton 9.0 (Beta)" "Proton 8.0" "Proton 7.0" "Proton 6.3"; do
-    if [[ -d "$COMPAT_TOOLS_DIR/$proton_dir" ]]; then
-        # Get the internal name from compatibilitytool.vdf
-        COMPAT_VDF="$COMPAT_TOOLS_DIR/$proton_dir/compatibilitytool.vdf"
-        if [[ -f "$COMPAT_VDF" ]]; then
-            # Extract the internal name
-            PROTON_VERSION=$(grep -A5 '"compat_tools"' "$COMPAT_VDF" | grep -E '^\s+"[^"]+"\s*$' | head -1 | tr -d ' \t"')
-            if [[ -n "$PROTON_VERSION" ]]; then
-                echo "Found Proton: $PROTON_VERSION in $proton_dir"
-                break
-            fi
-        fi
-    fi
-done
-
-# If we couldn't find it that way, try the simple approach
-if [[ -z "$PROTON_VERSION" ]]; then
-    for proton in "proton_experimental" "proton_9" "proton_8" "proton_7" "proton_63"; do
-        if [[ -d "$COMPAT_TOOLS_DIR/Proton"* ]] && [[ -d "$COMPAT_TOOLS_DIR/"*"$proton"* ]]; then
-            PROTON_VERSION="$proton"
-            echo "Found Proton (fallback): $PROTON_VERSION"
-            break
-        fi
-    done
-fi
-
 # Create the entry name with ReShade suffix
 ENTRY_NAME="${GAME_NAME} (ReShade)"
+
+# Add the shortcut
+echo "Adding $ENTRY_NAME to Steam shortcuts..."
 
 # Create a Python script to add the shortcut
 python3 << EOF
@@ -158,105 +121,15 @@ print(f"Successfully added shortcut with index {next_index}")
 print(f"App ID: $APP_ID")
 EOF
 
-# Now update localconfig.vdf to set Proton compatibility
-if [[ -f "$LOCALCONFIG" && -n "$PROTON_VERSION" ]]; then
-    echo "Setting Proton compatibility for App ID $APP_ID to $PROTON_VERSION"
-    
-    # Create a Python script to modify localconfig properly
-    python3 << EOFPY
-import re
-import os
-
-app_id = "$APP_ID"
-proton_version = "$PROTON_VERSION"
-localconfig_path = "$LOCALCONFIG"
-
-# Read the file
-with open(localconfig_path, 'r', encoding='utf-8', errors='ignore') as f:
-    content = f.read()
-
-# First, let's find the CompatToolMapping section
-# Look for the pattern more carefully
-pattern = r'("CompatToolMapping"\s*{[^}]*})'
-match = re.search(pattern, content, re.DOTALL)
-
-if match:
-    # Extract the existing mapping content
-    mapping_section = match.group(1)
-    
-    # Check if our app_id already exists
-    if f'"{app_id}"' in mapping_section:
-        print(f"App ID {app_id} already has compatibility set")
-    else:
-        # Add our new entry
-        # Find the last closing brace of CompatToolMapping
-        insert_pos = mapping_section.rfind('}')
-        
-        new_entry = f'''
-				"{app_id}"
-				{{
-					"name"		"{proton_version}"
-					"config"		""
-					"priority"		"250"
-				}}'''
-        
-        # Insert the new entry
-        new_mapping = mapping_section[:insert_pos] + new_entry + '\n\t\t\t' + mapping_section[insert_pos:]
-        
-        # Replace in the original content
-        content = content.replace(mapping_section, new_mapping)
-        
-        print(f"Added compatibility entry for {app_id}")
-else:
-    # CompatToolMapping doesn't exist, we need to create it
-    # Find the Steam section
-    steam_pattern = r'("Steam"\s*{)'
-    steam_match = re.search(steam_pattern, content)
-    
-    if steam_match:
-        insert_pos = steam_match.end()
-        
-        new_section = f'''
-				"CompatToolMapping"
-				{{
-					"{app_id}"
-					{{
-						"name"		"{proton_version}"
-						"config"		""
-						"priority"		"250"
-					}}
-				}}'''
-        
-        # Find a good place to insert (after the opening brace of Steam section)
-        # Look for the next line after "Steam" {
-        next_line_pos = content.find('\n', insert_pos)
-        if next_line_pos != -1:
-            content = content[:next_line_pos] + new_section + content[next_line_pos:]
-            print(f"Created CompatToolMapping section with entry for {app_id}")
-
-# Write the file back
-with open(localconfig_path, 'w', encoding='utf-8') as f:
-    f.write(content)
-
-print("Proton compatibility set successfully")
-EOFPY
-
-else
-    if [[ -z "$PROTON_VERSION" ]]; then
-        echo "Warning: No Proton version found. You'll need to set compatibility manually."
-    else
-        echo "Warning: localconfig.vdf not found"
-    fi
-fi
-
 echo ""
 echo "=== Success! ==="
 echo "Shortcut created: $ENTRY_NAME"
 echo "App ID: $APP_ID"
-if [[ -n "$PROTON_VERSION" ]]; then
-    echo "Proton version: $PROTON_VERSION"
-else
-    echo "Note: Proton compatibility needs to be set manually in Steam"
-fi
+echo ""
+echo "IMPORTANT: After restarting Steam, you'll need to:"
+echo "1. Right-click the game in your library"
+echo "2. Go to Properties > Compatibility"
+echo "3. Enable 'Force the use of a specific Steam Play compatibility tool'"
+echo "4. Select your preferred Proton version"
 echo ""
 echo "Please restart Steam to see the new shortcut"
