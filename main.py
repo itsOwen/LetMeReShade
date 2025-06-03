@@ -7,6 +7,7 @@ import asyncio
 import glob
 from pathlib import Path
 from typing import Dict, List, Optional
+import asyncio
 
 class Plugin:
     def __init__(self):
@@ -523,3 +524,80 @@ class Plugin:
         except Exception as e:
             decky.logger.error(f"Error adding to Steam: {e}")
             return {"status": "error", "message": str(e)}
+
+    async def remove_reshade_from_game(self, game_info: dict, remove_shortcut: bool) -> dict:
+        """Remove ReShade from a non-Steam game and optionally remove the Steam shortcut"""
+        try:
+            decky.logger.info(f"Removing ReShade from game: {game_info}, remove_shortcut: {remove_shortcut}")
+            
+            # First, remove ReShade files from the game directory
+            assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
+            script_path = assets_dir / "reshade-game-manager.sh"
+            
+            if not script_path.exists():
+                return {"status": "error", "message": "ReShade game manager script not found"}
+            
+            # Make script executable
+            script_path.chmod(0o755)
+            
+            # Run the game manager script to uninstall ReShade
+            process = subprocess.run(
+                ["/bin/bash", str(script_path), "uninstall", game_info['path']],
+                cwd=str(assets_dir),
+                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib'},
+                capture_output=True,
+                text=True
+            )
+            
+            decky.logger.info(f"ReShade uninstall output: {process.stdout}")
+            if process.stderr:
+                decky.logger.error(f"ReShade uninstall errors: {process.stderr}")
+            
+            if process.returncode != 0:
+                return {"status": "error", "message": f"Failed to uninstall ReShade: {process.stderr}"}
+            
+            # If requested, remove the Steam shortcut
+            if remove_shortcut:
+                shortcut_remover_path = assets_dir / "steam-shortcut-remover.sh"
+                
+                if not shortcut_remover_path.exists():
+                    decky.logger.warning("Shortcut remover script not found, skipping shortcut removal")
+                else:
+                    # Make script executable
+                    shortcut_remover_path.chmod(0o755)
+                    
+                    # Run shortcut remover
+                    process = subprocess.run(
+                        ["/bin/bash", str(shortcut_remover_path), 
+                        f"{game_info['name']} (ReShade)",
+                        game_info['exe']],
+                        capture_output=True,
+                        text=True
+                    )
+                    
+                    decky.logger.info(f"Shortcut remover output: {process.stdout}")
+                    if process.stderr:
+                        decky.logger.error(f"Shortcut remover errors: {process.stderr}")
+            
+            return {
+                "status": "success",
+                "message": "ReShade removed successfully!"
+            }
+            
+        except Exception as e:
+            decky.logger.error(f"Error removing ReShade: {e}")
+            return {"status": "error", "message": str(e)}
+
+    async def restart_steam_client(self) -> dict:
+        """Restart the Steam client"""
+        try:
+            decky.logger.info("Killing Steam client to trigger restart...")
+
+            # Kill all Steam processes
+            subprocess.run(["killall", "steam"], capture_output=True)
+
+            return {"status": "success", "message": "Steam restart triggered via killall"}
+
+        except Exception as e:
+            decky.logger.error(f"Failed to kill Steam: {e}")
+            return {"status": "error", "message": f"Failed to restart Steam: {str(e)}"}

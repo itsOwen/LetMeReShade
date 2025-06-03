@@ -5,7 +5,8 @@ import {
     ButtonItem,
     Dropdown,
     showModal,
-    ConfirmModal
+    ConfirmModal,
+    ToggleField
 } from "@decky/ui";
 import { callable } from "@decky/api";
 
@@ -30,14 +31,27 @@ interface AddToSteamResponse {
     message: string;
 }
 
+interface RestartResponse {
+    status: string;
+    message?: string;
+}
+
+interface RemoveReShadeResponse {
+    status: string;
+    message: string;
+}
+
 const scanNonSteamGames = callable<[], NonSteamGamesResponse>("scan_non_steam_games");
 const addToSteamWithReShade = callable<[GameInfo], AddToSteamResponse>("add_to_steam_with_reshade");
+const restartSteamClient = callable<[], RestartResponse>("restart_steam_client");
+const removeReShadeFromGame = callable<[GameInfo, boolean], RemoveReShadeResponse>("remove_reshade_from_game");
 
 function NonSteamManager() {
     const [games, setGames] = useState<GameInfo[]>([]);
     const [selectedGame, setSelectedGame] = useState<GameInfo | null>(null);
     const [loading, setLoading] = useState(false);
     const [scanning, setScanning] = useState(false);
+    const [removing, setRemoving] = useState(false);
 
     const scanForGames = async () => {
         setScanning(true);
@@ -95,8 +109,10 @@ function NonSteamManager() {
                             <li>Add {selectedGame.name} to Steam</li>
                             <li>Install ReShade for the game</li>
                             <li>Configure launch options automatically</li>
-                            <li>Set Proton compatibility</li>
                         </ul>
+                        <p style={{ marginTop: '10px' }}>
+                            <strong>Note:</strong> You'll need to manually set Proton compatibility after restarting Steam.
+                        </p>
                         <p style={{ marginTop: '10px' }}>Continue?</p>
                     </div>
                 }
@@ -113,10 +129,32 @@ function NonSteamManager() {
                             showModal(
                                 <ConfirmModal
                                     strTitle="Success!"
-                                    strDescription={`${selectedGame.name} has been added to Steam with ReShade!
-                  
-Steam will need to be restarted to see the new shortcut.`}
-                                    strOKButtonText="OK"
+                                    strDescription={
+                                        <div>
+                                            <p>{selectedGame.name} has been added to Steam with ReShade!</p>
+                                            <p style={{ marginTop: '10px' }}><strong>Next steps:</strong></p>
+                                            <ol style={{ textAlign: 'left', paddingLeft: '20px' }}>
+                                                <li>Steam will restart automatically</li>
+                                                <li>Find the game in your library</li>
+                                                <li>Right-click → Properties → Compatibility</li>
+                                                <li>Enable "Force the use of a specific Steam Play compatibility tool"</li>
+                                                <li>Select your preferred Proton version</li>
+                                            </ol>
+                                            <p style={{ marginTop: '10px' }}>
+                                                <strong>Click OK to restart Steam now.</strong>
+                                            </p>
+                                        </div>
+                                    }
+                                    strOKButtonText="OK - Restart Steam"
+                                    onOK={async () => {
+                                        // Restart Steam when user clicks OK
+                                        try {
+                                            console.log("Restarting Steam...");
+                                            await restartSteamClient();
+                                        } catch (error) {
+                                            console.error("Failed to restart Steam:", error);
+                                        }
+                                    }}
                                 />
                             );
                             // Clear selection
@@ -141,6 +179,91 @@ Steam will need to be restarted to see the new shortcut.`}
                         );
                     } finally {
                         setLoading(false);
+                    }
+                }}
+            />
+        );
+    };
+
+    const handleRemoveReShade = async () => {
+        if (!selectedGame) return;
+
+        let removeShortcut = true;
+
+        showModal(
+            <ConfirmModal
+                strTitle="Remove ReShade?"
+                strDescription={
+                    <div>
+                        <p>This will remove ReShade from {selectedGame.name}.</p>
+                        <div style={{ marginTop: '15px' }}>
+                            <ToggleField
+                                label="Also remove Steam library shortcut"
+                                checked={removeShortcut}
+                                onChange={(checked) => {
+                                    removeShortcut = checked;
+                                }}
+                            />
+                        </div>
+                    </div>
+                }
+                strOKButtonText="Remove ReShade"
+                strCancelButtonText="Cancel"
+                onOK={async () => {
+                    setRemoving(true);
+                    try {
+                        console.log("Removing ReShade from game:", selectedGame, "Remove shortcut:", removeShortcut);
+                        const result = await removeReShadeFromGame(selectedGame, removeShortcut);
+                        console.log("Remove ReShade result:", result);
+
+                        if (result.status === "success") {
+                            showModal(
+                                <ConfirmModal
+                                    strTitle="Success!"
+                                    strDescription={
+                                        <div>
+                                            <p>ReShade has been removed from {selectedGame.name}!</p>
+                                            {removeShortcut && (
+                                                <p style={{ marginTop: '10px' }}>
+                                                    The Steam shortcut has also been removed.
+                                                    Click OK to restart Steam.
+                                                </p>
+                                            )}
+                                        </div>
+                                    }
+                                    strOKButtonText={removeShortcut ? "OK - Restart Steam" : "OK"}
+                                    onOK={async () => {
+                                        if (removeShortcut) {
+                                            try {
+                                                console.log("Restarting Steam...");
+                                                await restartSteamClient();
+                                            } catch (error) {
+                                                console.error("Failed to restart Steam:", error);
+                                            }
+                                        }
+                                    }}
+                                />
+                            );
+                        } else {
+                            showModal(
+                                <ConfirmModal
+                                    strTitle="Error"
+                                    strDescription={`Failed to remove ReShade: ${result.message}`}
+                                    strOKButtonText="OK"
+                                />
+                            );
+                        }
+                    } catch (error) {
+                        console.error("Remove ReShade error:", error);
+                        showModal(
+                            <ConfirmModal
+                                strTitle="Error"
+                                strDescription={`An error occurred: ${error}`}
+                                strOKButtonText="OK"
+                            />
+                        );
+                    } finally {
+                        setRemoving(false);
                     }
                 }}
             />
@@ -174,15 +297,27 @@ Steam will need to be restarted to see the new shortcut.`}
                     </PanelSectionRow>
 
                     {selectedGame && (
-                        <PanelSectionRow>
-                            <ButtonItem
-                                layout="below"
-                                onClick={handleAddToSteam}
-                                disabled={loading}
-                            >
-                                {loading ? "Adding..." : "➕ Add to Steam with ReShade"}
-                            </ButtonItem>
-                        </PanelSectionRow>
+                        <>
+                            <PanelSectionRow>
+                                <ButtonItem
+                                    layout="below"
+                                    onClick={handleAddToSteam}
+                                    disabled={loading}
+                                >
+                                    {loading ? "Adding..." : "➕ Add to Steam with ReShade"}
+                                </ButtonItem>
+                            </PanelSectionRow>
+
+                            <PanelSectionRow>
+                                <ButtonItem
+                                    layout="below"
+                                    onClick={handleRemoveReShade}
+                                    disabled={removing}
+                                >
+                                    {removing ? "Removing..." : "🗑️ Remove ReShade"}
+                                </ButtonItem>
+                            </PanelSectionRow>
+                        </>
                     )}
                 </>
             )}
