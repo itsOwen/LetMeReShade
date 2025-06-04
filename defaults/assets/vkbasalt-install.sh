@@ -5,9 +5,8 @@ set -eo pipefail
 XDG_DATA_HOME=${XDG_DATA_HOME:-"$HOME/.local/share"}
 VKBASALT_PATH=${VKBASALT_PATH:-"$XDG_DATA_HOME/vkbasalt/installation"}
 VKBASALT_BASE=${VKBASALT_PATH%/*}  # Parent directory of installation
-RESHADE_REPO="https://github.com/gripped/vkBasalt-working-reshade-shaders.git"
-RESHADE_BRANCH="master"
-RESHADE_PATH="allshaders/reshade-shaders-working"
+# Get the path to the bin directory containing bundled files
+BIN_PATH="$(dirname "$(realpath "$0")")/../bin"
 
 log_message() {
     echo "[DEBUG] $1" >&2
@@ -22,14 +21,11 @@ setup_directories() {
 install_reshade_shaders() {
     log_message "Setting up ReShade shaders for VkBasalt..."
     
-    local temp_dir=$(mktemp -d)
-    /usr/bin/git clone --depth 1 -b ${RESHADE_BRANCH} ${RESHADE_REPO} "${temp_dir}"
-    
+    # Use bundled VkBasalt shaders
+    log_message "Using bundled VkBasalt ReShade shaders"
     mkdir -p "$HOME/.config/reshade/"{Shaders,Textures}
-    cp -r "${temp_dir}/${RESHADE_PATH}/Shaders/"* "$HOME/.config/reshade/Shaders/"
-    cp -r "${temp_dir}/${RESHADE_PATH}/Textures/"* "$HOME/.config/reshade/Textures/"
+    tar -xzf "$BIN_PATH/vkbasalt_shaders.tar.gz" -C "$HOME/.config/reshade/"
     
-    rm -rf "${temp_dir}"
     log_message "ReShade shaders installed for VkBasalt"
 }
 
@@ -38,9 +34,10 @@ install_vkbasalt() {
     local vkbasalt_pkg="/tmp/vkbasalt.tar.zst"
     local vkbasalt_lib32_pkg="/tmp/vkbasalt32.tar.zst"
 
-    # Download packages
-    wget -q "https://builds.garudalinux.org/repos/chaotic-aur/x86_64/vkbasalt-0.3.2.10-1.1-x86_64.pkg.tar.zst" -O "${vkbasalt_pkg}"
-    wget -q "https://builds.garudalinux.org/repos/chaotic-aur/x86_64/lib32-vkbasalt-0.3.2.10-1.1-x86_64.pkg.tar.zst" -O "${vkbasalt_lib32_pkg}"
+    # Use bundled VkBasalt packages
+    log_message "Using bundled VkBasalt packages"
+    cp "$BIN_PATH/vkbasalt_package.tar.zst" "${vkbasalt_pkg}"
+    cp "$BIN_PATH/vkbasalt_package_lib32.tar.zst" "${vkbasalt_lib32_pkg}"
 
     # Extract files
     tar xf "${vkbasalt_pkg}" --strip-components=2 \
