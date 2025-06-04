@@ -3,6 +3,7 @@
 GAME_NAME="$1"
 EXE_PATH="$2"
 GAME_DIR="$3"
+DLL_OVERRIDE="${4:-dxgi}"  # Use provided DLL or default to dxgi
 
 # Steam user detection
 STEAM_USER_ID=$(ls -1 "$HOME/.steam/steam/userdata" 2>/dev/null | head -1)
@@ -13,12 +14,11 @@ fi
 
 SHORTCUTS_VDF="$HOME/.steam/steam/userdata/$STEAM_USER_ID/config/shortcuts.vdf"
 
-# Detect architecture and DLL override
+# Detect architecture 
 cd "$GAME_DIR"
 ARCH=$(file "$EXE_PATH" | grep -q "x86-64" && echo "64" || echo "32")
 
-# Default to dxgi for most games
-DLL_OVERRIDE="dxgi"
+echo "Using DLL override: $DLL_OVERRIDE"
 
 # Generate unique app ID for non-Steam game
 APP_ID=$(echo -n "$EXE_PATH" | md5sum | cut -c1-8)
@@ -98,7 +98,7 @@ else:
     data = b'\x00shortcuts\x00'
     next_index = 0
 
-# Create new entry
+# Create new entry with the detected DLL override
 new_entry = create_shortcut_entry(
     next_index,
     "$ENTRY_NAME",
@@ -125,6 +125,7 @@ echo ""
 echo "=== Success! ==="
 echo "Shortcut created: $ENTRY_NAME"
 echo "App ID: $APP_ID"
+echo "DLL Override: $DLL_OVERRIDE"
 echo ""
 echo "IMPORTANT: After restarting Steam, you'll need to:"
 echo "1. Right-click the game in your library"
