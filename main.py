@@ -489,7 +489,21 @@ class Plugin:
             if process.returncode != 0:
                 return {"status": "error", "message": f"Failed to install ReShade: {process.stderr}"}
             
-            # Create Steam shortcut
+            # Extract the detected DLL override from the output
+            detected_dll = "dxgi"  # Default fallback
+            if process.stdout:
+                # Look for the launch option line and extract the DLL
+                for line in process.stdout.split('\n'):
+                    if "Use this launch option:" in line:
+                        # Extract DLL from pattern like: WINEDLLOVERRIDES="d3dcompiler_47=n;d3d9=n,b"
+                        import re
+                        match = re.search(r';(\w+)=n,b', line)
+                        if match:
+                            detected_dll = match.group(1)
+                            decky.logger.info(f"Detected DLL override: {detected_dll}")
+                            break
+            
+            # Create Steam shortcut with the correct DLL
             shortcut_script_path = assets_dir / "steam-shortcut-creator.sh"
             
             if not shortcut_script_path.exists():
@@ -499,12 +513,13 @@ class Plugin:
             # Make script executable
             shortcut_script_path.chmod(0o755)
             
-            # Run shortcut creator
+            # Run shortcut creator with detected DLL
             process = subprocess.run(
                 ["/bin/bash", str(shortcut_script_path), 
                 game_info['name'],
                 game_info['exe'],
-                game_info['path']],
+                game_info['path'],
+                detected_dll],  # Pass the detected DLL as 4th argument
                 capture_output=True,
                 text=True
             )
