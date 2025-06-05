@@ -113,7 +113,7 @@
     {
       "name": "retroarch_shaders.tar.gz",
       "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/retroarch_shaders.tar.gz",
-      "sha256hash": "28cd96ba5e9e4ba97894a4f9a8867480ca118d48fd5091d39a319ef606f051f1"
+      "sha256hash": "ffc884be634b1a2c57766c87ec2c0a7dc4d4b9aea7dc87ed1b737417aed03eaf"
     }
   ]
 }
