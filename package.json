@@ -1,6 +1,6 @@
 {
   "name": "letmereshade-decky",
-  "version": "0.9",
+  "version": "1.0",
   "description": "ReShade plugin for Steam Deck - Enhanced version with improved shader and game management",
   "type": "module",
   "scripts": {
@@ -109,6 +109,11 @@
       "name": "vkbasalt_shaders.tar.gz",
       "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/vkbasalt_shaders.tar.gz", 
       "sha256hash": "ffcd4374ee03b68d67785ec1fc85724f529c2e7356d11160eb47ecfae38ea460"
+    },
+    {
+      "name": "retroarch_shaders.tar.gz",
+      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/retroarch_shaders.tar.gz",
+      "sha256hash": "28cd96ba5e9e4ba97894a4f9a8867480ca118d48fd5091d39a319ef606f051f1"
     }
   ]
 }
