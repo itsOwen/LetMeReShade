@@ -13,8 +13,12 @@ VULKAN_SUPPORT=${VULKAN_SUPPORT:-0}
 GLOBAL_INI=${GLOBAL_INI:-"ReShade.ini"}
 RESHADE_VERSION=${RESHADE_VERSION:-"latest"}
 RESHADE_ADDON_SUPPORT=${RESHADE_ADDON_SUPPORT:-0}
-# Get the path to the bin directory containing bundled files
-BIN_PATH="$(dirname "$(realpath "$0")")/../bin"
+
+# Get the correct path to the bin directory
+# Extract the plugin root path from the script path
+SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"  # Go up two directories from assets
+BIN_PATH="$PLUGIN_ROOT/bin"
 
 log_message() {
     echo "[DEBUG] $1" >&2
@@ -54,6 +58,17 @@ setup_d3dcompiler() {
     
     log_message "Setting up d3dcompiler_47.dll for $arch bits"
     
+    # Check if bin directory and file exist
+    if [[ ! -d "$BIN_PATH" ]]; then
+        log_message "Error: Bin directory not found at $BIN_PATH"
+        exit 1
+    fi
+    
+    if [[ ! -f "$BIN_PATH/d3dcompiler_47.dll" ]]; then
+        log_message "Error: d3dcompiler_47.dll not found in bin directory"
+        exit 1
+    fi
+    
     # Copy the bundled DLL
     cp "$BIN_PATH/d3dcompiler_47.dll" "$target_file"
     
@@ -72,26 +87,52 @@ setup_shaders() {
         mkdir -p "$MAIN_PATH/ReShade_shaders/Merged/Textures"
     fi
     
+    # Check if bin directory exists
+    if [[ ! -d "$BIN_PATH" ]]; then
+        log_message "Error: Bin directory not found at $BIN_PATH"
+        exit 1
+    fi
+    
     # Extract shader archives
-    log_message "Extracting bundled reshade_shaders.tar.gz"
-    mkdir -p "$MAIN_PATH/ReShade_shaders/reshade-shaders"
-    tar -xzf "$BIN_PATH/reshade_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/reshade-shaders"
+    if [[ -f "$BIN_PATH/reshade_shaders.tar.gz" ]]; then
+        log_message "Extracting bundled reshade_shaders.tar.gz"
+        mkdir -p "$MAIN_PATH/ReShade_shaders/reshade-shaders"
+        tar -xzf "$BIN_PATH/reshade_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/reshade-shaders"
+    else
+        log_message "Error: reshade_shaders.tar.gz not found in bin directory"
+    fi
     
-    log_message "Extracting bundled sweetfx_shaders.tar.gz"
-    mkdir -p "$MAIN_PATH/ReShade_shaders/sweetfx-shaders"
-    tar -xzf "$BIN_PATH/sweetfx_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/sweetfx-shaders"
+    if [[ -f "$BIN_PATH/sweetfx_shaders.tar.gz" ]]; then
+        log_message "Extracting bundled sweetfx_shaders.tar.gz"
+        mkdir -p "$MAIN_PATH/ReShade_shaders/sweetfx-shaders"
+        tar -xzf "$BIN_PATH/sweetfx_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/sweetfx-shaders"
+    else
+        log_message "Error: sweetfx_shaders.tar.gz not found in bin directory"
+    fi
     
-    log_message "Extracting bundled martymc_shaders.tar.gz"
-    mkdir -p "$MAIN_PATH/ReShade_shaders/martymc-shaders"
-    tar -xzf "$BIN_PATH/martymc_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/martymc-shaders"
+    if [[ -f "$BIN_PATH/martymc_shaders.tar.gz" ]]; then
+        log_message "Extracting bundled martymc_shaders.tar.gz"
+        mkdir -p "$MAIN_PATH/ReShade_shaders/martymc-shaders"
+        tar -xzf "$BIN_PATH/martymc_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/martymc-shaders"
+    else
+        log_message "Error: martymc_shaders.tar.gz not found in bin directory"
+    fi
     
-    log_message "Extracting bundled astrayfx_shaders.tar.gz"
-    mkdir -p "$MAIN_PATH/ReShade_shaders/astrayfx-shaders"
-    tar -xzf "$BIN_PATH/astrayfx_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/astrayfx-shaders"
+    if [[ -f "$BIN_PATH/astrayfx_shaders.tar.gz" ]]; then
+        log_message "Extracting bundled astrayfx_shaders.tar.gz"
+        mkdir -p "$MAIN_PATH/ReShade_shaders/astrayfx-shaders"
+        tar -xzf "$BIN_PATH/astrayfx_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/astrayfx-shaders"
+    else
+        log_message "Error: astrayfx_shaders.tar.gz not found in bin directory"
+    fi
     
-    log_message "Extracting bundled prod80_shaders.tar.gz"
-    mkdir -p "$MAIN_PATH/ReShade_shaders/prod80-shaders"
-    tar -xzf "$BIN_PATH/prod80_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/prod80-shaders"
+    if [[ -f "$BIN_PATH/prod80_shaders.tar.gz" ]]; then
+        log_message "Extracting bundled prod80_shaders.tar.gz"
+        mkdir -p "$MAIN_PATH/ReShade_shaders/prod80-shaders"
+        tar -xzf "$BIN_PATH/prod80_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/prod80-shaders"
+    else
+        log_message "Error: prod80_shaders.tar.gz not found in bin directory"
+    fi
     
     # Merge shaders if enabled
     if [[ $MERGE_SHADERS == 1 ]]; then
@@ -121,12 +162,29 @@ setup_reshade() {
     
     log_message "Setting up ReShade (addon_support=$addon_support)..."
     
+    # Check if bin directory exists
+    if [[ ! -d "$BIN_PATH" ]]; then
+        log_message "Error: Bin directory not found at $BIN_PATH"
+        log_message "Current working directory: $(pwd)"
+        log_message "Script directory: $SCRIPT_DIR"
+        log_message "Plugin root: $PLUGIN_ROOT"
+        exit 1
+    fi
+    
     # Use bundled ReShade installer
     if [[ $addon_support -eq 1 ]]; then
+        if [[ ! -f "$BIN_PATH/reshade_latest_addon.exe" ]]; then
+            log_message "Error: reshade_latest_addon.exe not found in bin directory"
+            exit 1
+        fi
         log_message "Using bundled ReShade addon installer"
         cp "$BIN_PATH/reshade_latest_addon.exe" "./ReShade_Setup.exe"
         local version="latest_Addon"
     else
+        if [[ ! -f "$BIN_PATH/reshade_latest.exe" ]]; then
+            log_message "Error: reshade_latest.exe not found in bin directory"
+            exit 1
+        fi
         log_message "Using bundled ReShade installer"
         cp "$BIN_PATH/reshade_latest.exe" "./ReShade_Setup.exe"
         local version="latest"
@@ -159,6 +217,17 @@ setup_reshade_ini() {
     if [[ $GLOBAL_INI != 0 ]] && [[ $GLOBAL_INI == ReShade.ini ]] && [[ ! -f $MAIN_PATH/$GLOBAL_INI ]]; then
         cd "$MAIN_PATH" || exit
         
+        # Check if bin directory and template file exist
+        if [[ ! -d "$BIN_PATH" ]]; then
+            log_message "Error: Bin directory not found at $BIN_PATH"
+            exit 1
+        fi
+        
+        if [[ ! -f "$BIN_PATH/reshade_ini_template.ini" ]]; then
+            log_message "Error: reshade_ini_template.ini not found in bin directory"
+            exit 1
+        fi
+        
         # Use bundled template
         log_message "Using bundled ReShade.ini template"
         cp "$BIN_PATH/reshade_ini_template.ini" "$MAIN_PATH/$GLOBAL_INI"
@@ -175,6 +244,11 @@ setup_reshade_ini() {
 
 main() {
     echo -e "$SEPERATOR\nStarting ReShade installation...\n$SEPERATOR"
+    
+    # Debug output for file paths
+    log_message "Script directory: $SCRIPT_DIR"
+    log_message "Plugin root: $PLUGIN_ROOT"
+    log_message "Bin path: $BIN_PATH"
     
     check_dependencies
     setup_directories
