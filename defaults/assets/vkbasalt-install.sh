@@ -5,8 +5,12 @@ set -eo pipefail
 XDG_DATA_HOME=${XDG_DATA_HOME:-"$HOME/.local/share"}
 VKBASALT_PATH=${VKBASALT_PATH:-"$XDG_DATA_HOME/vkbasalt/installation"}
 VKBASALT_BASE=${VKBASALT_PATH%/*}  # Parent directory of installation
-# Get the path to the bin directory containing bundled files
-BIN_PATH="$(dirname "$(realpath "$0")")/../bin"
+
+# Get the correct path to the bin directory
+# Extract the plugin root path from the script path
+SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"  # Go up two directories from assets
+BIN_PATH="$PLUGIN_ROOT/bin"
 
 log_message() {
     echo "[DEBUG] $1" >&2
@@ -21,6 +25,20 @@ setup_directories() {
 install_reshade_shaders() {
     log_message "Setting up ReShade shaders for VkBasalt..."
     
+    # Check if bin directory exists
+    if [[ ! -d "$BIN_PATH" ]]; then
+        log_message "Error: Bin directory not found at $BIN_PATH"
+        log_message "Script directory: $SCRIPT_DIR"
+        log_message "Plugin root: $PLUGIN_ROOT"
+        exit 1
+    fi
+    
+    # Check if shader file exists
+    if [[ ! -f "$BIN_PATH/vkbasalt_shaders.tar.gz" ]]; then
+        log_message "Error: vkbasalt_shaders.tar.gz not found in bin directory"
+        exit 1
+    fi
+    
     # Use bundled VkBasalt shaders
     log_message "Using bundled VkBasalt ReShade shaders"
     mkdir -p "$HOME/.config/reshade/"{Shaders,Textures}
@@ -33,6 +51,23 @@ install_vkbasalt() {
     log_message "Starting VkBasalt installation..."
     local vkbasalt_pkg="/tmp/vkbasalt.tar.zst"
     local vkbasalt_lib32_pkg="/tmp/vkbasalt32.tar.zst"
+
+    # Check if bin directory exists
+    if [[ ! -d "$BIN_PATH" ]]; then
+        log_message "Error: Bin directory not found at $BIN_PATH"
+        exit 1
+    fi
+    
+    # Check if VkBasalt packages exist
+    if [[ ! -f "$BIN_PATH/vkbasalt_package.tar.zst" ]]; then
+        log_message "Error: vkbasalt_package.tar.zst not found in bin directory"
+        exit 1
+    fi
+    
+    if [[ ! -f "$BIN_PATH/vkbasalt_package_lib32.tar.zst" ]]; then
+        log_message "Error: vkbasalt_package_lib32.tar.zst not found in bin directory"
+        exit 1
+    fi
 
     # Use bundled VkBasalt packages
     log_message "Using bundled VkBasalt packages"
@@ -86,6 +121,11 @@ EOL
 }
 
 main() {
+    # Debug output for file paths
+    log_message "Script directory: $SCRIPT_DIR"
+    log_message "Plugin root: $PLUGIN_ROOT"
+    log_message "Bin path: $BIN_PATH"
+    
     if [ ! -f /etc/os-release ] || ! grep -q SteamOS /etc/os-release; then
         echo "This script should only be run on a Steam Deck running SteamOS"
         exit 1
