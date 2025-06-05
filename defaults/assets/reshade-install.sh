@@ -134,6 +134,14 @@ setup_shaders() {
         log_message "Error: prod80_shaders.tar.gz not found in bin directory"
     fi
     
+    if [[ -f "$BIN_PATH/retroarch_shaders.tar.gz" ]]; then
+        log_message "Extracting bundled retroarch_shaders.tar.gz"
+        mkdir -p "$MAIN_PATH/ReShade_shaders/retroarch-shaders"
+        tar -xzf "$BIN_PATH/retroarch_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/retroarch-shaders"
+    else
+        log_message "Error: retroarch_shaders.tar.gz not found in bin directory"
+    fi
+    
     # Merge shaders if enabled
     if [[ $MERGE_SHADERS == 1 ]]; then
         log_message "Merging shaders..."
