@@ -18,6 +18,7 @@
 - Global preset management and custom shader support
 - In-game overlay accessible via the **HOME** key
 - Steam Deck–optimized configurations
+- Support for Heroic Games (Epic Games, GOG, Amazon Games)
 
 ## 📋 Prerequisites
 

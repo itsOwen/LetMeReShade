@@ -1,6 +1,6 @@
 {
   "name": "letmereshade-decky",
-  "version": "0.7",
+  "version": "0.9",
   "description": "ReShade plugin for Steam Deck - Enhanced version with improved shader and game management",
   "type": "module",
   "scripts": {
@@ -48,17 +48,67 @@
       ]
     }
   },
-  "remote_binary_bundling" : false,
+  "remote_binary_bundling": false,
   "remote_binary": [
     {
+      "name": "reshade_latest.exe",
+      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/reshade_latest.exe",
+      "sha256hash": "503a2cef5a3a24400759d9559b36b9100574c09525d8ef1dba7b91b001ff1845"
+    },
+    {
+      "name": "reshade_latest_addon.exe",
+      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/reshade_latest_addon.exe",
+      "sha256hash": "9ac89947607ebe01724f4f7a71788023fa458d12beed0435c8362190af1e5a6b"
+    },
+    {
       "name": "d3dcompiler_47.dll",
-      "url": "https://raw.githubusercontent.com/mozilla/fxc2/9aba9b1/dll/d3dcompiler_47.dll",
+      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/d3dcompiler_47.dll",
       "sha256hash": "4432bbd1a390874f3f0a503d45cc48d346abc3a8c0213c289f4b615bf0ee84f3"
     },
     {
-      "name": "7z",
-      "url": "https://www.7-zip.org/a/7z2301-linux-x64.tar.xz",
-      "sha256hash": "3a4b8d28477f696c676487b3cf15e86b407a87abd2d84c5bc3f696cd33b34abb"
+      "name": "reshade_ini_template.ini",
+      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/reshade_ini_template.ini",
+      "sha256hash": "cf19618185645ffdd4f70e2f4f0b4c6bcd060a6eeb867e18da7758f6d6efc412"
+    },
+    {
+      "name": "astrayfx_shaders.tar.gz",
+      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/astrayfx_shaders.tar.gz",
+      "sha256hash": "f873957ee6a48fdf2e62e94d3f875f4565b40c6c0dc5ae8d6a336b4b554d96cc"
+    },
+    {
+      "name": "martymc_shaders.tar.gz",
+      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/martymc_shaders.tar.gz",
+      "sha256hash": "667f1e617bcb5a679e50afd8820867e03a10229f4084bf3b06e2d68fdc9a0716"
+    },
+    {
+      "name": "prod80_shaders.tar.gz",
+      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/prod80_shaders.tar.gz",
+      "sha256hash": "469b32e5cd8d51bec95d8c1a561d23a85caf8604a722de560c4fb3c34bef3291"
+    },
+    {
+      "name": "reshade_shaders.tar.gz",
+      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/reshade_shaders.tar.gz",
+      "sha256hash": "03546f110c60ccae995aa06eaeadc6ab06d79d139b2f4487017188e7d289fa98"
+    },
+    {
+      "name": "sweetfx_shaders.tar.gz",
+      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/sweetfx_shaders.tar.gz",
+      "sha256hash": "f8f370bb95f5501be40adcf8ab5aefdbb5475d0d73062b374f8e02c20ce8cb02"
+    },
+    {
+      "name": "vkbasalt_package.tar.zst",
+      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/vkbasalt_package.tar.zst",
+      "sha256hash": "07c5b7354961b5a0fdfce9fa3a3fd82dbcdc3c49249b908fb1378786a1412451"
+    },
+    {
+      "name": "vkbasalt_package_lib32.tar.zst",
+      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/vkbasalt_package_lib32.tar.zst",
+      "sha256hash": "c5a99c1845bef69fa992dc19eb6a0900b0e994bb7c45aca9144bef363d61cf6b"
+    },
+    {
+      "name": "vkbasalt_shaders.tar.gz",
+      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/vkbasalt_shaders.tar.gz", 
+      "sha256hash": "ffcd4374ee03b68d67785ec1fc85724f529c2e7356d11160eb47ecfae38ea460"
     }
   ]
 }

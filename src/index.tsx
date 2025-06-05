@@ -3,27 +3,16 @@ import {
   PanelSection,
   PanelSectionRow,
   ButtonItem,
-  DropdownItem,
   ToggleField,
   ConfirmModal,
   showModal
 } from "@decky/ui";
 import { definePlugin, callable } from "@decky/api";
 import { IoMdColorPalette } from "react-icons/io";
-import ManualPatchSection from "./ManualPatchSection";
+import HeroicGamesSection from "./HeroicGamesSection";
+import SteamGamesSection from "./SteamGamesSection";
 
 interface InstallResult {
-  status: string;
-  message?: string;
-  output?: string;
-}
-
-interface GameInfo {
-  appid: string;
-  name: string;
-}
-
-interface ReShadeResponse {
   status: string;
   message?: string;
   output?: string;
@@ -34,22 +23,15 @@ interface PathCheckResponse {
   is_addon: boolean;
 }
 
-interface GameListResponse {
-  status: string;
-  games: GameInfo[];
-}
-
-const runInstallReShade = callable<[boolean], ReShadeResponse>("run_install_reshade");
-const runUninstallReShade = callable<[], ReShadeResponse>("run_uninstall_reshade");
-const manageGameReShade = callable<[string, string, string], ReShadeResponse>("manage_game_reshade");
+const runInstallReShade = callable<[boolean], InstallResult>("run_install_reshade");
+const runUninstallReShade = callable<[], InstallResult>("run_uninstall_reshade");
 const checkReShadePath = callable<[], PathCheckResponse>("check_reshade_path");
-const listInstalledGames = callable<[], GameListResponse>("list_installed_games");
 const logError = callable<[string], void>("log_error");
 
 // VkBasalt callables
 const checkVkBasaltPath = callable<[], PathCheckResponse>("check_vkbasalt_path");
-const runInstallVkBasalt = callable<[], ReShadeResponse>("run_install_vkbasalt");
-const runUninstallVkBasalt = callable<[], ReShadeResponse>("run_uninstall_vkbasalt");
+const runInstallVkBasalt = callable<[], InstallResult>("run_install_vkbasalt");
+const runUninstallVkBasalt = callable<[], InstallResult>("run_uninstall_vkbasalt");
 
 function ReShadeInstallerSection() {
   const [installing, setInstalling] = useState<boolean>(false);
@@ -380,178 +362,6 @@ function VkBasaltInstallerSection() {
   );
 }
 
-function InstalledGamesSection() {
-  const [games, setGames] = useState<{ appid: number; name: string }[]>([]);
-  const [selectedGame, setSelectedGame] = useState<{ appid: number; name: string } | null>(null);
-  const [result, setResult] = useState<string>('');
-
-  useEffect(() => {
-    const fetchGames = async () => {
-      try {
-        const response = await listInstalledGames();
-        if (response.status === "success") {
-          const sortedGames = response.games
-            .map(game => ({
-              appid: parseInt(game.appid, 10),
-              name: game.name
-            }))
-            .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-          setGames(sortedGames);
-        }
-      } catch (error) {
-        await logError(`Error fetching games: ${String(error)}`);
-      }
-    };
-    fetchGames();
-  }, []);
-
-  const handlePatchClick = async () => {
-    if (!selectedGame) return;
-
-    try {
-      const reshadeCheck = await checkReShadePath();
-      if (!reshadeCheck.exists) {
-        setResult("Please install ReShade first before patching games.");
-        return;
-      }
-
-      const response = await manageGameReShade(
-        selectedGame.appid.toString(),
-        "install",
-        "dxgi"
-      );
-
-      if (response.status === "success") {
-        const launchOptionsMatch = response.output?.match(/Use this launch option: (.+)/);
-        if (launchOptionsMatch) {
-          const launchOptions = launchOptionsMatch[1];
-          const detectedApi = launchOptions.match(/;(\w+)=n,b/)?.pop() || 'dxgi';
-          await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, launchOptions);
-          setResult(`ReShade installed successfully for ${selectedGame.name} using ${detectedApi.toUpperCase()} API.\nPress Home key in-game to open ReShade overlay.`);
-        } else {
-          await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, 'WINEDLLOVERRIDES="d3dcompiler_47=n;dxgi=n,b" %command%');
-          setResult(`ReShade installed successfully for ${selectedGame.name}. Press Home key in-game to open ReShade overlay.`);
-        }
-      } else {
-        setResult(`Failed to install ReShade: ${response.message || 'Unknown error'}`);
-      }
-    } catch (error) {
-      await logError(`handlePatchClick: ${String(error)}`);
-      setResult(`Error installing ReShade: ${String(error)}`);
-    }
-  };
-
-  const handleVkBasaltPatch = async () => {
-    if (!selectedGame) return;
-
-    try {
-      const vkbasaltCheck = await checkVkBasaltPath();
-      if (!vkbasaltCheck.exists) {
-        setResult("Please install VkBasalt first before patching games.");
-        return;
-      }
-
-      await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, 'ENABLE_VKBASALT=1 %command%');
-      setResult(`VkBasalt enabled for ${selectedGame.name}.\nPress Home key in-game to toggle effects.\nPlease follow the guide on GitHub or available YouTube videos for configuring VkBasalt settings and effects.`);
-
-    } catch (error) {
-      await logError(`handleVkBasaltPatch: ${String(error)}`);
-      setResult(`Error enabling VkBasalt: ${String(error)}`);
-    }
-  };
-
-  const handleUnpatchClick = async () => {
-    if (!selectedGame) return;
-
-    try {
-      const reshadeCheck = await checkReShadePath();
-      if (!reshadeCheck.exists) {
-        setResult("ReShade is not installed.");
-        return;
-      }
-
-      const response = await manageGameReShade(
-        selectedGame.appid.toString(),
-        "uninstall",
-        "dxgi"
-      );
-
-      if (response.status === "success") {
-        await SteamClient.Apps.SetAppLaunchOptions(selectedGame.appid, '');
-        setResult(`ReShade and VkBasalt removed successfully from ${selectedGame.name}`);
-      } else {
-        setResult(`Failed to remove ReShade: ${response.message || 'Unknown error'}`);
-      }
-    } catch (error) {
-      await logError(`handleUnpatchClick: ${String(error)}`);
-      setResult(`Error removing ReShade: ${String(error)}`);
-    }
-  };
-
-  return (
-    <PanelSection title="Install Patch in Game">
-      <PanelSectionRow>
-        <DropdownItem
-          rgOptions={games.map(game => ({
-            data: game.appid,
-            label: game.name
-          }))}
-          selectedOption={selectedGame?.appid}
-          onChange={(option) => {
-            const game = games.find(g => g.appid === option.data);
-            setSelectedGame(game || null);
-            setResult('');
-          }}
-          strDefaultLabel="Select a game..."
-          menuLabel="Installed Games"
-        />
-      </PanelSectionRow>
-
-      {result && (
-        <PanelSectionRow>
-          <div style={{
-            padding: '12px',
-            marginTop: '16px',
-            backgroundColor: 'var(--decky-selected-ui-bg)',
-            borderRadius: '4px'
-          }}>
-            {result}
-          </div>
-        </PanelSectionRow>
-      )}
-
-      {selectedGame && (
-        <>
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              onClick={handlePatchClick}
-            >
-              🔧 Install ReShade
-            </ButtonItem>
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              onClick={handleVkBasaltPatch}
-            >
-              🎨 Enable VkBasalt
-            </ButtonItem>
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              onClick={handleUnpatchClick}
-            >
-              🗑️ Remove ReShade/VkBasalt
-            </ButtonItem>
-          </PanelSectionRow>
-        </>
-      )}
-    </PanelSection>
-  );
-}
-
 export default definePlugin(() => ({
   name: "LetMeReShade Plugin",
   titleView: <div>LetMeReShade Manager</div>,
@@ -560,8 +370,8 @@ export default definePlugin(() => ({
     <>
       <ReShadeInstallerSection />
       <VkBasaltInstallerSection />
-      <InstalledGamesSection />
-      <ManualPatchSection />
+      <SteamGamesSection />
+      <HeroicGamesSection />
     </>
   ),
   icon: <IoMdColorPalette />,
