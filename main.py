@@ -17,7 +17,8 @@ class Plugin:
             'GLOBAL_INI': 'ReShade.ini',
             'DELETE_RESHADE_FILES': '0',
             'FORCE_RESHADE_UPDATE_CHECK': '0',
-            'RESHADE_ADDON_SUPPORT': '0'
+            'RESHADE_ADDON_SUPPORT': '0',
+            'RESHADE_VERSION': 'latest'  # New environment variable for version
         }
         # Separate base paths for ReShade and VkBasalt
         self.main_path = os.path.join(self.environment['XDG_DATA_HOME'], 'reshade')
@@ -41,9 +42,27 @@ class Plugin:
         path = Path(os.path.expanduser("~/.local/share/reshade"))
         marker_file = path / ".installed"
         addon_marker = path / ".installed_addon"
+        
+        # Check version information
+        version_info = {"version": "unknown", "addon": False}
+        if marker_file.exists() or addon_marker.exists():
+            try:
+                version_file = path / "reshade" / "LVERS"
+                if version_file.exists():
+                    with open(version_file, 'r') as f:
+                        version_content = f.read().strip()
+                        if "last" in version_content.lower():
+                            version_info["version"] = "last"
+                        else:
+                            version_info["version"] = "latest"
+                        version_info["addon"] = "addon" in version_content.lower()
+            except Exception as e:
+                decky.logger.error(f"Error reading version info: {str(e)}")
+        
         return {
             "exists": marker_file.exists() or addon_marker.exists(),
-            "is_addon": addon_marker.exists()
+            "is_addon": addon_marker.exists(),
+            "version_info": version_info
         }
 
     async def check_vkbasalt_path(self) -> dict:
@@ -140,7 +159,7 @@ class Plugin:
 
         raise ValueError(f"Could not find installation directory for AppID: {appid}")
 
-    async def run_install_reshade(self, with_addon: bool = False) -> dict:
+    async def run_install_reshade(self, with_addon: bool = False, version: str = "latest") -> dict:
         try:
             assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
             script_path = assets_dir / "reshade-install.sh"
@@ -152,8 +171,9 @@ class Plugin:
             # Create a new environment dictionary for this installation
             install_env = self.environment.copy()
             
-            # Explicitly set RESHADE_ADDON_SUPPORT based on the with_addon parameter
+            # Explicitly set RESHADE_ADDON_SUPPORT and RESHADE_VERSION based on parameters
             install_env['RESHADE_ADDON_SUPPORT'] = '1' if with_addon else '0'
+            install_env['RESHADE_VERSION'] = version
             
             # Add other necessary environment variables
             install_env.update({
@@ -161,7 +181,7 @@ class Plugin:
                 'XDG_DATA_HOME': os.path.expandvars('$HOME/.local/share')
             })
 
-            decky.logger.info(f"Installing ReShade with addon support: {with_addon}")
+            decky.logger.info(f"Installing ReShade {version} with addon support: {with_addon}")
             decky.logger.info(f"Environment: {install_env}")
 
             process = subprocess.run(
@@ -196,7 +216,8 @@ class Plugin:
 
             marker_file.touch()
 
-            return {"status": "success", "output": f"ReShade installed successfully!{'(with Addon Support)' if with_addon else ''}"}
+            version_display = f"ReShade {version.title()}" + (' (with Addon Support)' if with_addon else '')
+            return {"status": "success", "output": f"{version_display} installed successfully!"}
         except Exception as e:
             decky.logger.error(f"Install error: {str(e)}")
             return {"status": "error", "message": str(e)}
@@ -252,10 +273,13 @@ class Plugin:
             if process.returncode != 0:
                 return {"status": "error", "message": process.stderr}
 
-            # Remove installation marker
+            # Remove installation markers
             marker_file = Path(self.main_path) / ".installed"
+            addon_marker = Path(self.main_path) / ".installed_addon"
             if marker_file.exists():
                 marker_file.unlink()
+            if addon_marker.exists():
+                addon_marker.unlink()
                 
             return {"status": "success", "output": "ReShade uninstalled"}
         except Exception as e:
@@ -288,6 +312,159 @@ class Plugin:
             return {"status": "success", "output": "VkBasalt uninstalled"}
         except Exception as e:
             decky.logger.error(str(e))
+            return {"status": "error", "message": str(e)}
+
+    async def detect_linux_game(self, appid: str) -> dict:
+        """Detect if a Steam game is running the Linux version instead of Windows version"""
+        try:
+            game_path = self._find_game_path(appid)
+            decky.logger.info(f"Checking if game is Linux version: {game_path}")
+            
+            # Convert to Path object for easier handling
+            game_path_obj = Path(game_path)
+            
+            # Check 1: Look for .exe files (Windows indicator)
+            exe_files = list(game_path_obj.rglob("*.exe"))
+            has_exe_files = len(exe_files) > 0
+            
+            # Filter out known utility/redistributable executables
+            main_exe_files = []
+            for exe in exe_files:
+                exe_name = exe.name.lower()
+                if not any(skip in exe_name for skip in ["unins", "redist", "vcredist", "directx", "setup", "install"]):
+                    main_exe_files.append(exe)
+            
+            has_main_exe = len(main_exe_files) > 0
+            
+            # Check 2: Look for Linux-specific files and directories
+            linux_indicators = [
+                # Common Linux executable patterns
+                "*.x86_64", "*.x86", "*.bin", "*.sh",
+                # Common Linux directories
+                "lib", "lib64", "bin", "share",
+                # Common Linux files
+                "*.so", "*.so.*"
+            ]
+            
+            linux_files_found = []
+            for pattern in linux_indicators:
+                matches = list(game_path_obj.rglob(pattern))
+                if matches:
+                    linux_files_found.extend([str(m.relative_to(game_path_obj)) for m in matches[:5]])  # Limit to 5 examples
+            
+            # Check 3: Look for specific Linux game files
+            linux_executables = []
+            for file in game_path_obj.iterdir():
+                if file.is_file() and file.suffix == "":  # Files without extension (common for Linux executables)
+                    try:
+                        # Check if file is executable
+                        if file.stat().st_mode & 0o111:  # Has execute permission
+                            # Use 'file' command to check if it's an ELF binary
+                            process = subprocess.run(
+                                ["file", str(file)],
+                                capture_output=True,
+                                text=True
+                            )
+                            if "ELF" in process.stdout:
+                                linux_executables.append(file.name)
+                    except Exception as e:
+                        decky.logger.debug(f"Error checking file {file}: {str(e)}")
+            
+            # Check 4: Look for Unity Linux indicators
+            unity_linux_indicators = [
+                "*_Data/Plugins/x86_64",
+                "*_Data/Mono",
+                "UnityPlayer.so"
+            ]
+            
+            unity_linux_files = []
+            for pattern in unity_linux_indicators:
+                matches = list(game_path_obj.rglob(pattern))
+                if matches:
+                    unity_linux_files.extend([str(m.relative_to(game_path_obj)) for m in matches[:3]])
+            
+            # Check 5: Read Steam manifest to get platform info
+            steam_root = Path(decky.HOME) / ".steam" / "steam"
+            library_file = steam_root / "steamapps" / "libraryfolders.vdf"
+            manifest_platform = None
+            
+            if library_file.exists():
+                library_paths = []
+                with open(library_file, "r", encoding="utf-8") as file:
+                    for line in file:
+                        if '"path"' in line:
+                            path = line.split('"path"')[1].strip().strip('"').replace("\\\\", "/")
+                            library_paths.append(path)
+                
+                for library_path in library_paths:
+                    manifest_path = Path(library_path) / "steamapps" / f"appmanifest_{appid}.acf"
+                    if manifest_path.exists():
+                        try:
+                            with open(manifest_path, "r", encoding="utf-8") as manifest:
+                                content = manifest.read()
+                                # Look for tool information which might indicate platform
+                                if '"tool"' in content and '"1"' in content:
+                                    # This might be a tool/utility, not a game
+                                    pass
+                        except Exception as e:
+                            decky.logger.debug(f"Error reading manifest: {str(e)}")
+                        break
+            
+            # Decision logic
+            is_linux_game = False
+            confidence = "low"
+            reasons = []
+            
+            # Strong indicators of Linux version
+            if linux_executables:
+                is_linux_game = True
+                confidence = "high"
+                reasons.append(f"Found Linux ELF executables: {', '.join(linux_executables[:3])}")
+            
+            if unity_linux_files:
+                is_linux_game = True
+                confidence = "high"
+                reasons.append(f"Found Unity Linux files: {', '.join(unity_linux_files)}")
+            
+            # Medium indicators
+            if not has_main_exe and linux_files_found:
+                is_linux_game = True
+                confidence = "medium"
+                reasons.append(f"No Windows .exe files found, but Linux files present")
+            
+            # Weak indicators
+            if not has_exe_files and len(linux_files_found) > 10:
+                is_linux_game = True
+                confidence = "medium" if not reasons else confidence
+                reasons.append("Many Linux-style files found, no .exe files")
+            
+            # Additional context
+            total_files = len(list(game_path_obj.rglob("*"))) if game_path_obj.exists() else 0
+            
+            result = {
+                "status": "success",
+                "is_linux_game": is_linux_game,
+                "confidence": confidence,
+                "reasons": reasons,
+                "details": {
+                    "has_exe_files": has_exe_files,
+                    "has_main_exe": has_main_exe,
+                    "main_exe_count": len(main_exe_files),
+                    "linux_executables": linux_executables,
+                    "linux_files_found": len(linux_files_found),
+                    "unity_linux_files": len(unity_linux_files),
+                    "total_files": total_files,
+                    "game_path": str(game_path)
+                }
+            }
+            
+            decky.logger.info(f"Linux game detection result: {result}")
+            return result
+            
+        except ValueError as e:
+            return {"status": "error", "message": str(e)}
+        except Exception as e:
+            decky.logger.error(f"Error detecting Linux game: {str(e)}")
             return {"status": "error", "message": str(e)}
 
     async def manage_game_reshade(self, appid: str, action: str, dll_override: str = "dxgi", vulkan_mode: str = "") -> dict:
