@@ -15,6 +15,7 @@ const manageGameReShade = callable<[string, string, string], ReShadeResponse>("m
 const checkReShadePath = callable<[], PathCheckResponse>("check_reshade_path");
 const checkVkBasaltPath = callable<[], PathCheckResponse>("check_vkbasalt_path");
 const listInstalledGames = callable<[], GameListResponse>("list_installed_games");
+const detectLinuxGame = callable<[string], LinuxGameDetectionResponse>("detect_linux_game");
 const logError = callable<[string], void>("log_error");
 
 interface GameInfo {
@@ -44,12 +45,23 @@ interface GameListResponse {
   message?: string;
 }
 
+interface LinuxGameDetectionResponse {
+  status: string;
+  is_linux_game: boolean;
+  confidence: string;
+  reasons: string[];
+  details?: any;
+  message?: string;
+}
+
 const SteamGamesSection = () => {
   const [selectedGame, setSelectedGame] = useState<GameInfo | null>(null);
   const [selectedDll, setSelectedDll] = useState<DllOverride | null>(null);
   const [games, setGames] = useState<GameInfo[]>([]);
   const [result, setResult] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
+  const [linuxGameDetection, setLinuxGameDetection] = useState<LinuxGameDetectionResponse | null>(null);
+  const [checkingLinuxGame, setCheckingLinuxGame] = useState<boolean>(false);
 
   const dllOverrides: DllOverride[] = [
     { label: 'Automatic (Detect API)', value: 'auto' },
@@ -82,6 +94,29 @@ const SteamGamesSection = () => {
     fetchGames();
   }, []);
 
+  // Check for Linux game when a game is selected
+  useEffect(() => {
+    const checkLinuxGame = async () => {
+      if (!selectedGame) {
+        setLinuxGameDetection(null);
+        return;
+      }
+
+      try {
+        setCheckingLinuxGame(true);
+        const detection = await detectLinuxGame(selectedGame.appid);
+        setLinuxGameDetection(detection);
+      } catch (error) {
+        await logError(`Linux game detection error: ${String(error)}`);
+        setLinuxGameDetection(null);
+      } finally {
+        setCheckingLinuxGame(false);
+      }
+    };
+
+    checkLinuxGame();
+  }, [selectedGame]);
+
   const handlePatch = async () => {
     if (!selectedGame) {
       setResult('Please select a game.');
@@ -92,6 +127,43 @@ const SteamGamesSection = () => {
       setResult('Please select a DLL override or "Automatic".');
       return;
     }
+
+    // Check if it's a Linux game and warn user
+    if (linuxGameDetection?.is_linux_game && linuxGameDetection.confidence !== "low") {
+      showModal(
+        <ConfirmModal
+          strTitle="Linux Game Detected"
+          strDescription={
+            <div>
+              <p>This appears to be a Linux version of <strong>{selectedGame.name}</strong>. ReShade only works with Windows games running through Proton.</p>
+              
+              <p><strong>To fix this:</strong></p>
+              <ul style={{ marginLeft: '20px', marginBottom: '16px' }}>
+                <li>Right-click the game in Steam</li>
+                <li>Go to Properties → Compatibility</li>
+                <li>Check "Force the use of a specific Steam Play compatibility tool"</li>
+                <li>Select "Proton Experimental" or latest Proton version</li>
+                <li>Reinstall the game to download the Windows version</li>
+              </ul>
+              
+              <p>Do you want to continue anyway?</p>
+            </div>
+          }
+          strOKButtonText="Continue Anyway"
+          strCancelButtonText="Cancel"
+          onOK={async () => {
+            await proceedWithPatch();
+          }}
+        />
+      );
+      return;
+    }
+
+    await proceedWithPatch();
+  };
+
+  const proceedWithPatch = async () => {
+    if (!selectedGame || !selectedDll) return;
 
     try {
       const reshadeCheck = await checkReShadePath();
@@ -142,7 +214,7 @@ const SteamGamesSection = () => {
       );
     } catch (error) {
       setResult(`Error: ${error instanceof Error ? error.message : String(error)}`);
-      await logError(`SteamGamesSection -> handlePatch: ${String(error)}`);
+      await logError(`SteamGamesSection -> proceedWithPatch: ${String(error)}`);
     }
   };
 
@@ -220,6 +292,36 @@ const SteamGamesSection = () => {
     }
   };
 
+  const renderLinuxGameWarning = () => {
+    if (!linuxGameDetection || !linuxGameDetection.is_linux_game) return null;
+    
+    if (linuxGameDetection.confidence === "low") return null; // Don't show warning for low confidence
+
+    const confidenceColor = linuxGameDetection.confidence === "high" ? "#ff6b6b" : "#ffa726";
+    
+    return (
+      <PanelSectionRow>
+        <div style={{
+          padding: '12px',
+          marginTop: '8px',
+          backgroundColor: confidenceColor,
+          borderRadius: '4px',
+          color: 'white'
+        }}>
+          <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+            ⚠️ Linux Game Detected ({linuxGameDetection.confidence} confidence)
+          </div>
+          <div style={{ fontSize: '0.9em', marginBottom: '8px' }}>
+            This appears to be a Linux version. ReShade requires Windows version through Proton.
+          </div>
+          <div style={{ fontSize: '0.85em' }}>
+            <strong>Fix:</strong> Properties → Compatibility → Force Proton → Reinstall game
+          </div>
+        </div>
+      </PanelSectionRow>
+    );
+  };
+
   return (
     <PanelSection title="Steam Games">
       {loading ? (
@@ -242,6 +344,16 @@ const SteamGamesSection = () => {
               strDefaultLabel="Select a game..."
             />
           </PanelSectionRow>
+
+          {selectedGame && checkingLinuxGame && (
+            <PanelSectionRow>
+              <div style={{ fontSize: '0.9em', opacity: 0.7 }}>
+                🔍 Checking game version...
+              </div>
+            </PanelSectionRow>
+          )}
+
+          {renderLinuxGameWarning()}
 
           {selectedGame && (
             <PanelSectionRow>

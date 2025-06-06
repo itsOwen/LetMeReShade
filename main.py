@@ -314,6 +314,159 @@ class Plugin:
             decky.logger.error(str(e))
             return {"status": "error", "message": str(e)}
 
+    async def detect_linux_game(self, appid: str) -> dict:
+        """Detect if a Steam game is running the Linux version instead of Windows version"""
+        try:
+            game_path = self._find_game_path(appid)
+            decky.logger.info(f"Checking if game is Linux version: {game_path}")
+            
+            # Convert to Path object for easier handling
+            game_path_obj = Path(game_path)
+            
+            # Check 1: Look for .exe files (Windows indicator)
+            exe_files = list(game_path_obj.rglob("*.exe"))
+            has_exe_files = len(exe_files) > 0
+            
+            # Filter out known utility/redistributable executables
+            main_exe_files = []
+            for exe in exe_files:
+                exe_name = exe.name.lower()
+                if not any(skip in exe_name for skip in ["unins", "redist", "vcredist", "directx", "setup", "install"]):
+                    main_exe_files.append(exe)
+            
+            has_main_exe = len(main_exe_files) > 0
+            
+            # Check 2: Look for Linux-specific files and directories
+            linux_indicators = [
+                # Common Linux executable patterns
+                "*.x86_64", "*.x86", "*.bin", "*.sh",
+                # Common Linux directories
+                "lib", "lib64", "bin", "share",
+                # Common Linux files
+                "*.so", "*.so.*"
+            ]
+            
+            linux_files_found = []
+            for pattern in linux_indicators:
+                matches = list(game_path_obj.rglob(pattern))
+                if matches:
+                    linux_files_found.extend([str(m.relative_to(game_path_obj)) for m in matches[:5]])  # Limit to 5 examples
+            
+            # Check 3: Look for specific Linux game files
+            linux_executables = []
+            for file in game_path_obj.iterdir():
+                if file.is_file() and file.suffix == "":  # Files without extension (common for Linux executables)
+                    try:
+                        # Check if file is executable
+                        if file.stat().st_mode & 0o111:  # Has execute permission
+                            # Use 'file' command to check if it's an ELF binary
+                            process = subprocess.run(
+                                ["file", str(file)],
+                                capture_output=True,
+                                text=True
+                            )
+                            if "ELF" in process.stdout:
+                                linux_executables.append(file.name)
+                    except Exception as e:
+                        decky.logger.debug(f"Error checking file {file}: {str(e)}")
+            
+            # Check 4: Look for Unity Linux indicators
+            unity_linux_indicators = [
+                "*_Data/Plugins/x86_64",
+                "*_Data/Mono",
+                "UnityPlayer.so"
+            ]
+            
+            unity_linux_files = []
+            for pattern in unity_linux_indicators:
+                matches = list(game_path_obj.rglob(pattern))
+                if matches:
+                    unity_linux_files.extend([str(m.relative_to(game_path_obj)) for m in matches[:3]])
+            
+            # Check 5: Read Steam manifest to get platform info
+            steam_root = Path(decky.HOME) / ".steam" / "steam"
+            library_file = steam_root / "steamapps" / "libraryfolders.vdf"
+            manifest_platform = None
+            
+            if library_file.exists():
+                library_paths = []
+                with open(library_file, "r", encoding="utf-8") as file:
+                    for line in file:
+                        if '"path"' in line:
+                            path = line.split('"path"')[1].strip().strip('"').replace("\\\\", "/")
+                            library_paths.append(path)
+                
+                for library_path in library_paths:
+                    manifest_path = Path(library_path) / "steamapps" / f"appmanifest_{appid}.acf"
+                    if manifest_path.exists():
+                        try:
+                            with open(manifest_path, "r", encoding="utf-8") as manifest:
+                                content = manifest.read()
+                                # Look for tool information which might indicate platform
+                                if '"tool"' in content and '"1"' in content:
+                                    # This might be a tool/utility, not a game
+                                    pass
+                        except Exception as e:
+                            decky.logger.debug(f"Error reading manifest: {str(e)}")
+                        break
+            
+            # Decision logic
+            is_linux_game = False
+            confidence = "low"
+            reasons = []
+            
+            # Strong indicators of Linux version
+            if linux_executables:
+                is_linux_game = True
+                confidence = "high"
+                reasons.append(f"Found Linux ELF executables: {', '.join(linux_executables[:3])}")
+            
+            if unity_linux_files:
+                is_linux_game = True
+                confidence = "high"
+                reasons.append(f"Found Unity Linux files: {', '.join(unity_linux_files)}")
+            
+            # Medium indicators
+            if not has_main_exe and linux_files_found:
+                is_linux_game = True
+                confidence = "medium"
+                reasons.append(f"No Windows .exe files found, but Linux files present")
+            
+            # Weak indicators
+            if not has_exe_files and len(linux_files_found) > 10:
+                is_linux_game = True
+                confidence = "medium" if not reasons else confidence
+                reasons.append("Many Linux-style files found, no .exe files")
+            
+            # Additional context
+            total_files = len(list(game_path_obj.rglob("*"))) if game_path_obj.exists() else 0
+            
+            result = {
+                "status": "success",
+                "is_linux_game": is_linux_game,
+                "confidence": confidence,
+                "reasons": reasons,
+                "details": {
+                    "has_exe_files": has_exe_files,
+                    "has_main_exe": has_main_exe,
+                    "main_exe_count": len(main_exe_files),
+                    "linux_executables": linux_executables,
+                    "linux_files_found": len(linux_files_found),
+                    "unity_linux_files": len(unity_linux_files),
+                    "total_files": total_files,
+                    "game_path": str(game_path)
+                }
+            }
+            
+            decky.logger.info(f"Linux game detection result: {result}")
+            return result
+            
+        except ValueError as e:
+            return {"status": "error", "message": str(e)}
+        except Exception as e:
+            decky.logger.error(f"Error detecting Linux game: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
     async def manage_game_reshade(self, appid: str, action: str, dll_override: str = "dxgi", vulkan_mode: str = "") -> dict:
         try:
             assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
