@@ -4,6 +4,7 @@ import {
   PanelSectionRow,
   ButtonItem,
   ToggleField,
+  DropdownItem,
   ConfirmModal,
   showModal
 } from "@decky/ui";
@@ -21,9 +22,18 @@ interface InstallResult {
 interface PathCheckResponse {
   exists: boolean;
   is_addon: boolean;
+  version_info?: {
+    version: string;
+    addon: boolean;
+  };
 }
 
-const runInstallReShade = callable<[boolean], InstallResult>("run_install_reshade");
+interface VersionOption {
+  label: string;
+  value: string;
+}
+
+const runInstallReShade = callable<[boolean, string], InstallResult>("run_install_reshade");
 const runUninstallReShade = callable<[], InstallResult>("run_uninstall_reshade");
 const checkReShadePath = callable<[], PathCheckResponse>("check_reshade_path");
 const logError = callable<[string], void>("log_error");
@@ -39,21 +49,42 @@ function ReShadeInstallerSection() {
   const [installResult, setInstallResult] = useState<InstallResult | null>(null);
   const [uninstallResult, setUninstallResult] = useState<InstallResult | null>(null);
   const [pathExists, setPathExists] = useState<boolean | null>(null);
-  const [isAddon, setIsAddon] = useState<boolean>(false);
   const [addonEnabled, setAddonEnabled] = useState<boolean>(false);
+  const [selectedVersion, setSelectedVersion] = useState<VersionOption | null>(null);
+  const [currentVersionInfo, setCurrentVersionInfo] = useState<{ version: string; addon: boolean } | null>(null);
   const [initialLoad, setInitialLoad] = useState<boolean>(true);
   const [showingAddonDialog, setShowingAddonDialog] = useState<boolean>(false);
   const [pendingAddonState, setPendingAddonState] = useState<boolean>(false);
+
+  const versionOptions: VersionOption[] = [
+    { label: 'ReShade Latest', value: 'latest' },
+    { label: 'ReShade Last Version', value: 'last' }
+  ];
 
   useEffect(() => {
     const checkPath = async () => {
       try {
         const result = await checkReShadePath();
         setPathExists(result.exists);
-        setIsAddon(result.is_addon);
+        
+        if (result.version_info) {
+          setCurrentVersionInfo(result.version_info);
+        }
 
         if (initialLoad) {
           setAddonEnabled(result.is_addon);
+          // Set version dropdown to match currently installed version
+          if (!selectedVersion) {
+            if (result.version_info && result.version_info.version) {
+              // Find the matching version option based on installed version
+              const installedVersion = result.version_info.version;
+              const matchingOption = versionOptions.find(v => v.value === installedVersion);
+              setSelectedVersion(matchingOption || versionOptions[0]); // Default to latest if not found
+            } else {
+              // No version info available, default to latest
+              setSelectedVersion(versionOptions[0]);
+            }
+          }
           setInitialLoad(false);
         }
       } catch (e) {
@@ -63,7 +94,7 @@ function ReShadeInstallerSection() {
     checkPath();
     const intervalId = setInterval(checkPath, 3000);
     return () => clearInterval(intervalId);
-  }, [initialLoad]);
+  }, [initialLoad, selectedVersion]);
 
   useEffect(() => {
     if (installResult) {
@@ -82,9 +113,14 @@ function ReShadeInstallerSection() {
   }, [uninstallResult]);
 
   const handleInstallClick = async () => {
+    if (!selectedVersion) {
+      setInstallResult({ status: "error", message: "Please select a ReShade version" });
+      return;
+    }
+
     try {
       setInstalling(true);
-      const result = await runInstallReShade(addonEnabled);
+      const result = await runInstallReShade(addonEnabled, selectedVersion.value);
       setInstallResult(result);
     } catch (e) {
       setInstallResult({ status: "error", message: String(e) });
@@ -136,18 +172,85 @@ function ReShadeInstallerSection() {
     }
   };
 
+  const getInstallButtonText = () => {
+    if (installing) return "Installing...";
+    
+    let text = "🔧 Install";
+    if (selectedVersion) {
+      text += ` ${selectedVersion.label}`;
+    }
+    if (addonEnabled) {
+      text += " with Addon Support";
+    }
+    return text;
+  };
+
+  const getVersionMismatchWarning = () => {
+    if (!pathExists || !currentVersionInfo || !selectedVersion) return null;
+    
+    const currentVersion = currentVersionInfo.version;
+    const selectedVersionValue = selectedVersion.value;
+    const currentAddon = currentVersionInfo.addon;
+    
+    if (currentVersion !== selectedVersionValue || currentAddon !== addonEnabled) {
+      return (
+        <PanelSectionRow>
+          <div style={{
+            padding: '12px',
+            marginBottom: '12px',
+            backgroundColor: 'var(--decky-warning)',
+            borderRadius: '4px',
+            color: 'white'
+          }}>
+            ⚠️ Configuration change detected - reinstallation required
+          </div>
+        </PanelSectionRow>
+      );
+    }
+    
+    return null;
+  };
+
   return (
     <PanelSection title="ReShade Management">
       {pathExists !== null && (
         <PanelSectionRow>
           <div style={{ color: pathExists ? "green" : "red" }}>
-            {pathExists ? `🟢 ReShade Is Installed${isAddon ? " (with Addon Support)" : ""}` : "🔴 ReShade Not Installed"}
+            {pathExists ? (
+              <>
+                🟢 ReShade Is Installed
+                {currentVersionInfo && (
+                  <div style={{ fontSize: '0.9em', opacity: 0.8, marginTop: '4px' }}>
+                    Version: {currentVersionInfo.version.charAt(0).toUpperCase() + currentVersionInfo.version.slice(1)}
+                    {currentVersionInfo.addon ? " (with Addon Support)" : ""}
+                  </div>
+                )}
+              </>
+            ) : (
+              "🔴 ReShade Not Installed"
+            )}
           </div>
         </PanelSectionRow>
       )}
 
       {pathExists === false && (
         <>
+          <PanelSectionRow>
+            <DropdownItem
+              rgOptions={versionOptions.map(version => ({
+                data: version.value,
+                label: version.label
+              }))}
+              selectedOption={selectedVersion ? selectedVersion.value : undefined}
+              onChange={(option) => {
+                const selected = versionOptions.find(v => v.value === option.data);
+                if (selected) {
+                  setSelectedVersion(selected);
+                }
+              }}
+              strDefaultLabel="Select ReShade version..."
+            />
+          </PanelSectionRow>
           <PanelSectionRow>
             <ToggleField
               label="Enable Addon Support"
@@ -158,8 +261,12 @@ function ReShadeInstallerSection() {
             />
           </PanelSectionRow>
           <PanelSectionRow>
-            <ButtonItem layout="below" onClick={handleInstallClick} disabled={installing}>
-              {installing ? "Installing..." : `🔧 Install ReShade${addonEnabled ? " with Addon Support" : ""}`}
+            <ButtonItem 
+              layout="below" 
+              onClick={handleInstallClick} 
+              disabled={installing || !selectedVersion}
+            >
+              {getInstallButtonText()}
             </ButtonItem>
           </PanelSectionRow>
         </>
@@ -167,19 +274,23 @@ function ReShadeInstallerSection() {
 
       {pathExists === true && (
         <>
-          {isAddon !== addonEnabled && (
-            <PanelSectionRow>
-              <div style={{
-                padding: '12px',
-                marginBottom: '12px',
-                backgroundColor: 'var(--decky-warning)',
-                borderRadius: '4px',
-                color: 'white'
-              }}>
-                ⚠️ {addonEnabled ? "Addon support requires reinstallation" : "Switching to non-addon version requires reinstallation"}
-              </div>
-            </PanelSectionRow>
-          )}
+          {getVersionMismatchWarning()}
+          <PanelSectionRow>
+            <DropdownItem
+              rgOptions={versionOptions.map(version => ({
+                data: version.value,
+                label: version.label
+              }))}
+              selectedOption={selectedVersion ? selectedVersion.value : undefined}
+              onChange={(option) => {
+                const selected = versionOptions.find(v => v.value === option.data);
+                if (selected) {
+                  setSelectedVersion(selected);
+                }
+              }}
+              strDefaultLabel="Select ReShade version..."
+            />
+          </PanelSectionRow>
           <PanelSectionRow>
             <ToggleField
               label="Enable Addon Support"
@@ -188,6 +299,15 @@ function ReShadeInstallerSection() {
               onChange={handleAddonToggle}
               disabled={showingAddonDialog}
             />
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem 
+              layout="below" 
+              onClick={handleInstallClick} 
+              disabled={installing || !selectedVersion}
+            >
+              {getInstallButtonText()}
+            </ButtonItem>
           </PanelSectionRow>
           <PanelSectionRow>
             <ButtonItem layout="below" onClick={handleUninstallClick} disabled={uninstalling}>
@@ -207,7 +327,7 @@ function ReShadeInstallerSection() {
             color: installResult.status === "success" ? "green" : "red"
           }}>
             {installResult.status === "success" ?
-              "✅ ReShade installed successfully!" :
+              `✅ ${installResult.output || "ReShade installed successfully!"}` :
               `❌ Error: ${installResult.message || "Installation failed"}`}
           </div>
         </PanelSectionRow>

@@ -11,7 +11,7 @@ UPDATE_RESHADE=${UPDATE_RESHADE:-1}
 MERGE_SHADERS=${MERGE_SHADERS:-1}
 VULKAN_SUPPORT=${VULKAN_SUPPORT:-0}
 GLOBAL_INI=${GLOBAL_INI:-"ReShade.ini"}
-RESHADE_VERSION=${RESHADE_VERSION:-"latest"}
+RESHADE_VERSION=${RESHADE_VERSION:-"latest"}  # New: version selection
 RESHADE_ADDON_SUPPORT=${RESHADE_ADDON_SUPPORT:-0}
 
 # Get the correct path to the bin directory
@@ -168,7 +168,7 @@ setup_reshade() {
     local addon_support=${1:-0}
     createTempDir
     
-    log_message "Setting up ReShade (addon_support=$addon_support)..."
+    log_message "Setting up ReShade $RESHADE_VERSION (addon_support=$addon_support)..."
     
     # Check if bin directory exists
     if [[ ! -d "$BIN_PATH" ]]; then
@@ -179,24 +179,37 @@ setup_reshade() {
         exit 1
     fi
     
-    # Use bundled ReShade installer
-    if [[ $addon_support -eq 1 ]]; then
-        if [[ ! -f "$BIN_PATH/reshade_latest_addon.exe" ]]; then
-            log_message "Error: reshade_latest_addon.exe not found in bin directory"
-            exit 1
+    # Select the correct installer based on version and addon support
+    local installer_name=""
+    local version_suffix=""
+    
+    if [[ "$RESHADE_VERSION" == "last" ]]; then
+        version_suffix="_last"
+        if [[ $addon_support -eq 1 ]]; then
+            installer_name="reshade_last_addon.exe"
+            version_suffix="${version_suffix}_Addon"
+        else
+            installer_name="reshade_last.exe"
         fi
-        log_message "Using bundled ReShade addon installer"
-        cp "$BIN_PATH/reshade_latest_addon.exe" "./ReShade_Setup.exe"
-        local version="latest_Addon"
     else
-        if [[ ! -f "$BIN_PATH/reshade_latest.exe" ]]; then
-            log_message "Error: reshade_latest.exe not found in bin directory"
-            exit 1
+        # Default to latest
+        version_suffix="_latest"
+        if [[ $addon_support -eq 1 ]]; then
+            installer_name="reshade_latest_addon.exe"
+            version_suffix="${version_suffix}_Addon"
+        else
+            installer_name="reshade_latest.exe"
         fi
-        log_message "Using bundled ReShade installer"
-        cp "$BIN_PATH/reshade_latest.exe" "./ReShade_Setup.exe"
-        local version="latest"
     fi
+    
+    # Check if the installer exists
+    if [[ ! -f "$BIN_PATH/$installer_name" ]]; then
+        log_message "Error: $installer_name not found in bin directory"
+        exit 1
+    fi
+    
+    log_message "Using installer: $installer_name"
+    cp "$BIN_PATH/$installer_name" "./ReShade_Setup.exe"
     
     # Extract the installer
     7z -y e "./ReShade_Setup.exe" 1> /dev/null || {
@@ -205,7 +218,7 @@ setup_reshade() {
         exit 1
     }
     
-    local target_dir="$RESHADE_PATH/$version"
+    local target_dir="$RESHADE_PATH/$RESHADE_VERSION$version_suffix"
     rm -rf "$target_dir"
     mkdir -p "$target_dir"
     mv ./* "$target_dir"
@@ -213,7 +226,7 @@ setup_reshade() {
     
     # Create latest symlink and version file
     ln -sfn "$target_dir" "$RESHADE_PATH/latest"
-    echo "$version" > "$RESHADE_PATH/LVERS"
+    echo "$RESHADE_VERSION$version_suffix" > "$RESHADE_PATH/LVERS"
     
     # Create version indicator file
     if [[ $addon_support -eq 1 ]]; then
@@ -251,12 +264,13 @@ setup_reshade_ini() {
 }
 
 main() {
-    echo -e "$SEPERATOR\nStarting ReShade installation...\n$SEPERATOR"
+    echo -e "$SEPERATOR\nStarting ReShade $RESHADE_VERSION installation...\n$SEPERATOR"
     
     # Debug output for file paths
     log_message "Script directory: $SCRIPT_DIR"
     log_message "Plugin root: $PLUGIN_ROOT"
     log_message "Bin path: $BIN_PATH"
+    log_message "ReShade version: $RESHADE_VERSION"
     
     check_dependencies
     setup_directories
@@ -282,7 +296,7 @@ main() {
     setup_shaders
     setup_reshade_ini
     
-    echo -e "$SEPERATOR\nReShade installation completed successfully"
+    echo -e "$SEPERATOR\nReShade $RESHADE_VERSION installation completed successfully"
     echo "Shaders installed to: $MAIN_PATH/ReShade_shaders"
     [[ -f "$MAIN_PATH/$GLOBAL_INI" ]] && echo "ReShade.ini created at: $MAIN_PATH/$GLOBAL_INI"
     if [[ $RESHADE_ADDON_SUPPORT -eq 1 ]]; then
@@ -290,6 +304,7 @@ main() {
     else
         echo "Installed without addon support"
     fi
+    echo "Version: $RESHADE_VERSION"
 }
 
 main "$@"

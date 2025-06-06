@@ -17,7 +17,8 @@ class Plugin:
             'GLOBAL_INI': 'ReShade.ini',
             'DELETE_RESHADE_FILES': '0',
             'FORCE_RESHADE_UPDATE_CHECK': '0',
-            'RESHADE_ADDON_SUPPORT': '0'
+            'RESHADE_ADDON_SUPPORT': '0',
+            'RESHADE_VERSION': 'latest'  # New environment variable for version
         }
         # Separate base paths for ReShade and VkBasalt
         self.main_path = os.path.join(self.environment['XDG_DATA_HOME'], 'reshade')
@@ -41,9 +42,27 @@ class Plugin:
         path = Path(os.path.expanduser("~/.local/share/reshade"))
         marker_file = path / ".installed"
         addon_marker = path / ".installed_addon"
+        
+        # Check version information
+        version_info = {"version": "unknown", "addon": False}
+        if marker_file.exists() or addon_marker.exists():
+            try:
+                version_file = path / "reshade" / "LVERS"
+                if version_file.exists():
+                    with open(version_file, 'r') as f:
+                        version_content = f.read().strip()
+                        if "last" in version_content.lower():
+                            version_info["version"] = "last"
+                        else:
+                            version_info["version"] = "latest"
+                        version_info["addon"] = "addon" in version_content.lower()
+            except Exception as e:
+                decky.logger.error(f"Error reading version info: {str(e)}")
+        
         return {
             "exists": marker_file.exists() or addon_marker.exists(),
-            "is_addon": addon_marker.exists()
+            "is_addon": addon_marker.exists(),
+            "version_info": version_info
         }
 
     async def check_vkbasalt_path(self) -> dict:
@@ -140,7 +159,7 @@ class Plugin:
 
         raise ValueError(f"Could not find installation directory for AppID: {appid}")
 
-    async def run_install_reshade(self, with_addon: bool = False) -> dict:
+    async def run_install_reshade(self, with_addon: bool = False, version: str = "latest") -> dict:
         try:
             assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
             script_path = assets_dir / "reshade-install.sh"
@@ -152,8 +171,9 @@ class Plugin:
             # Create a new environment dictionary for this installation
             install_env = self.environment.copy()
             
-            # Explicitly set RESHADE_ADDON_SUPPORT based on the with_addon parameter
+            # Explicitly set RESHADE_ADDON_SUPPORT and RESHADE_VERSION based on parameters
             install_env['RESHADE_ADDON_SUPPORT'] = '1' if with_addon else '0'
+            install_env['RESHADE_VERSION'] = version
             
             # Add other necessary environment variables
             install_env.update({
@@ -161,7 +181,7 @@ class Plugin:
                 'XDG_DATA_HOME': os.path.expandvars('$HOME/.local/share')
             })
 
-            decky.logger.info(f"Installing ReShade with addon support: {with_addon}")
+            decky.logger.info(f"Installing ReShade {version} with addon support: {with_addon}")
             decky.logger.info(f"Environment: {install_env}")
 
             process = subprocess.run(
@@ -196,7 +216,8 @@ class Plugin:
 
             marker_file.touch()
 
-            return {"status": "success", "output": f"ReShade installed successfully!{'(with Addon Support)' if with_addon else ''}"}
+            version_display = f"ReShade {version.title()}" + (' (with Addon Support)' if with_addon else '')
+            return {"status": "success", "output": f"{version_display} installed successfully!"}
         except Exception as e:
             decky.logger.error(f"Install error: {str(e)}")
             return {"status": "error", "message": str(e)}
@@ -252,10 +273,13 @@ class Plugin:
             if process.returncode != 0:
                 return {"status": "error", "message": process.stderr}
 
-            # Remove installation marker
+            # Remove installation markers
             marker_file = Path(self.main_path) / ".installed"
+            addon_marker = Path(self.main_path) / ".installed_addon"
             if marker_file.exists():
                 marker_file.unlink()
+            if addon_marker.exists():
+                addon_marker.unlink()
                 
             return {"status": "success", "output": "ReShade uninstalled"}
         except Exception as e:
