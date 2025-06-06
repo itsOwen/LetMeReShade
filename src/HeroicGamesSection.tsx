@@ -14,6 +14,7 @@ import { callable } from "@decky/api";
 interface HeroicGameInfo {
   name: string;
   path: string;
+  app_id?: string;
   config_file?: string;
   config_key?: string;
 }
@@ -47,7 +48,6 @@ const installReshadeForHeroicGame = callable<[string, string], HeroicResponse>("
 const uninstallReshadeForHeroicGame = callable<[string], HeroicResponse>("uninstall_reshade_for_heroic_game");
 const updateHeroicConfig = callable<[string, string, string], HeroicResponse>("update_heroic_config");
 const findHeroicGameConfig = callable<[string, string], HeroicResponse>("find_heroic_game_config");
-const searchHeroicConfigByIdentifier = callable<[string], HeroicResponse>("search_heroic_config_by_identifier");
 const detectHeroicGameApi = callable<[string], HeroicResponse>("detect_heroic_game_api");
 const checkReShadePath = callable<[], PathCheckResponse>("check_reshade_path");
 const logError = callable<[string], void>("log_error");
@@ -77,10 +77,7 @@ const HeroicGamesSection = () => {
         setLoading(true);
         const response = await findHeroicGames();
         if (response.status === "success" && response.games) {
-          const sortedGames = response.games.sort((a, b) => 
-            a.name.toLowerCase().localeCompare(b.name.toLowerCase())
-          );
-          setHeroicGames(sortedGames);
+          setHeroicGames(response.games);
         } else {
           setResult(`Failed to load Heroic games: ${response.message || 'Unknown error'}`);
         }
@@ -151,7 +148,9 @@ const HeroicGamesSection = () => {
               return;
             }
             
-            // Try to update config if we have config information
+            let configFound = false;
+            
+            // Try to update config if we already have config information
             if (selectedGame.config_file && selectedGame.config_key) {
               const configResponse = await updateHeroicConfig(
                 selectedGame.config_file,
@@ -160,12 +159,13 @@ const HeroicGamesSection = () => {
               );
               
               if (configResponse.status === "success") {
+                configFound = true;
                 setResult(`ReShade installed successfully for ${selectedGame.name} with ${finalDllOverride.toUpperCase()} API.\nHeroic configuration has been updated. Press HOME key in-game to open ReShade overlay.`);
-              } else {
-                setResult(`ReShade installed, but failed to update Heroic config: ${configResponse.message || 'Unknown error'}.\nYou may need to manually add WINEDLLOVERRIDES="d3dcompiler_47=n;${finalDllOverride}=n,b" to the game's launch options.`);
               }
-            } else {
-              // Try to find config by game name
+            }
+            
+            // If config wasn't found or update failed, try to find config
+            if (!configFound) {
               const configResponse = await findHeroicGameConfig(selectedGame.path, selectedGame.name);
               
               if (configResponse.status === "success" && configResponse.config_file && configResponse.config_key) {
@@ -176,30 +176,15 @@ const HeroicGamesSection = () => {
                 );
                 
                 if (updateResponse.status === "success") {
+                  configFound = true;
                   setResult(`ReShade installed successfully for ${selectedGame.name} with ${finalDllOverride.toUpperCase()} API.\nHeroic configuration has been updated. Press HOME key in-game to open ReShade overlay.`);
-                } else {
-                  setResult(`ReShade installed, but failed to update Heroic config: ${updateResponse.message || 'Unknown error'}.\nYou may need to manually add WINEDLLOVERRIDES="d3dcompiler_47=n;${finalDllOverride}=n,b" to the game's launch options.`);
-                }
-              } else {
-                // Final fallback: Try to search by game name directly as an identifier
-                const identifierResponse = await searchHeroicConfigByIdentifier(selectedGame.name);
-                
-                if (identifierResponse.status === "success" && identifierResponse.config_file && identifierResponse.config_key) {
-                  const updateResponse = await updateHeroicConfig(
-                    identifierResponse.config_file,
-                    identifierResponse.config_key,
-                    finalDllOverride
-                  );
-                  
-                  if (updateResponse.status === "success") {
-                    setResult(`ReShade installed successfully for ${selectedGame.name} with ${finalDllOverride.toUpperCase()} API.\nHeroic configuration has been updated using fallback detection. Press HOME key in-game to open ReShade overlay.`);
-                  } else {
-                    setResult(`ReShade installed, but failed to update Heroic config: ${updateResponse.message || 'Unknown error'}.\nYou may need to manually add WINEDLLOVERRIDES="d3dcompiler_47=n;${finalDllOverride}=n,b" to the game's launch options.`);
-                  }
-                } else {
-                  setResult(`ReShade installed successfully for ${selectedGame.name} with ${finalDllOverride.toUpperCase()} API, but could not find Heroic config despite multiple attempts.\nYou will need to manually add WINEDLLOVERRIDES="d3dcompiler_47=n;${finalDllOverride}=n,b" to the game's launch options in Heroic.`);
                 }
               }
+            }
+            
+            // If config still wasn't found, show a message with manual instructions
+            if (!configFound) {
+              setResult(`ReShade installed successfully for ${selectedGame.name} with ${finalDllOverride.toUpperCase()} API, but could not update Heroic configuration.\nYou will need to manually add WINEDLLOVERRIDES="d3dcompiler_47=n;${finalDllOverride}=n,b" to the game's launch options in Heroic.`);
             }
           }}
         />
@@ -239,14 +224,22 @@ const HeroicGamesSection = () => {
               setResult(`ReShade uninstalled successfully from ${selectedGame.name}.`);
               
               // Try to update config if we have config information to remove the env var
+              let configUpdated = false;
+              
               if (selectedGame.config_file && selectedGame.config_key) {
-                await updateHeroicConfig(
+                const updateResponse = await updateHeroicConfig(
                   selectedGame.config_file,
                   selectedGame.config_key,
                   "remove"
                 );
-              } else {
-                // Try to find config by game name
+                
+                if (updateResponse.status === "success") {
+                  configUpdated = true;
+                }
+              }
+              
+              // If config wasn't updated, try to find config
+              if (!configUpdated) {
                 const configResponse = await findHeroicGameConfig(selectedGame.path, selectedGame.name);
                 
                 if (configResponse.status === "success" && configResponse.config_file && configResponse.config_key) {
@@ -255,17 +248,6 @@ const HeroicGamesSection = () => {
                     configResponse.config_key,
                     "remove"
                   );
-                } else {
-                  // Final fallback: Try to search by game name directly as an identifier
-                  const identifierResponse = await searchHeroicConfigByIdentifier(selectedGame.name);
-                  
-                  if (identifierResponse.status === "success" && identifierResponse.config_file && identifierResponse.config_key) {
-                    await updateHeroicConfig(
-                      identifierResponse.config_file,
-                      identifierResponse.config_key,
-                      "remove"
-                    );
-                  }
                 }
               }
             } else {
@@ -288,7 +270,7 @@ const HeroicGamesSection = () => {
         </PanelSectionRow>
       ) : heroicGames.length === 0 ? (
         <PanelSectionRow>
-          <div>No Heroic games found. Make sure Heroic is installed and you have games in /home/deck/Games/Heroic/</div>
+          <div>No Heroic games found. Make sure Heroic is installed and you have games installed.</div>
         </PanelSectionRow>
       ) : (
         <>
