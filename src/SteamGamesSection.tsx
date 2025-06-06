@@ -130,25 +130,31 @@ const SteamGamesSection = () => {
 
     // Check if it's a Linux game and warn user
     if (linuxGameDetection?.is_linux_game && linuxGameDetection.confidence !== "low") {
+      // Create a custom modal content with proper formatting
+      const LinuxGameModalContent = () => (
+        <div style={{ textAlign: 'left' }}>
+          <p style={{ marginBottom: '16px' }}>
+            This appears to be a Linux version of <strong>{selectedGame.name}</strong>. 
+            ReShade only works with Windows games running through Proton.
+          </p>
+          
+          <p style={{ marginBottom: '8px', fontWeight: 'bold' }}>To fix this:</p>
+          <div style={{ marginBottom: '16px', paddingLeft: '8px' }}>
+            <div style={{ marginBottom: '4px' }}>• Right-click the game in Steam</div>
+            <div style={{ marginBottom: '4px' }}>• Go to Properties → Compatibility</div>
+            <div style={{ marginBottom: '4px' }}>• Check "Force the use of a specific Steam Play compatibility tool"</div>
+            <div style={{ marginBottom: '4px' }}>• Select "Proton Experimental" or latest Proton version</div>
+            <div style={{ marginBottom: '4px' }}>• Reinstall the game to download the Windows version</div>
+          </div>
+          
+          <p style={{ marginBottom: '0' }}>Do you want to continue anyway?</p>
+        </div>
+      );
+
       showModal(
         <ConfirmModal
           strTitle="Linux Game Detected"
-          strDescription={
-            <div>
-              <p>This appears to be a Linux version of <strong>{selectedGame.name}</strong>. ReShade only works with Windows games running through Proton.</p>
-              
-              <p><strong>To fix this:</strong></p>
-              <ul style={{ marginLeft: '20px', marginBottom: '16px' }}>
-                <li>Right-click the game in Steam</li>
-                <li>Go to Properties → Compatibility</li>
-                <li>Check "Force the use of a specific Steam Play compatibility tool"</li>
-                <li>Select "Proton Experimental" or latest Proton version</li>
-                <li>Reinstall the game to download the Windows version</li>
-              </ul>
-              
-              <p>Do you want to continue anyway?</p>
-            </div>
-          }
+          strDescription={<LinuxGameModalContent />}
           strOKButtonText="Continue Anyway"
           strCancelButtonText="Cancel"
           onOK={async () => {
