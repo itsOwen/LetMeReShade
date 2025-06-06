@@ -362,37 +362,43 @@ class Plugin:
             return {"status": "error", "message": str(e)}
 
     async def find_heroic_games(self) -> dict:
-        """Find games installed through Heroic Launcher with improved detection"""
+        """Find games installed through Heroic Launcher using the config file"""
         try:
-            # Common locations for Heroic games
-            heroic_paths = [
-                os.path.expanduser("~/Games/Heroic"),
-                os.path.expanduser("~/Games/Heroic Games Launcher"),
-                os.path.expanduser("~/heroic"),
-                os.path.expanduser("~/HeroicGamesLauncher"),
-                os.path.expanduser("~/.local/share/heroic/games")
-            ]
+            # Read the Heroic config file to get the default install path
+            heroic_config_path = os.path.expanduser("~/.var/app/com.heroicgameslauncher.hgl/config/heroic/store/config.json")
             
-            config_path = os.path.expanduser("~/.var/app/com.heroicgameslauncher.hgl/config/heroic/GamesConfig/")
-            
-            # First check if any of the paths exist
-            existing_paths = [path for path in heroic_paths if os.path.exists(path)]
-            
-            if not existing_paths:
-                return {"status": "error", "message": "Heroic games directory not found"}
+            if not os.path.exists(heroic_config_path):
+                return {"status": "error", "message": "Heroic config file not found"}
                 
-            games = []
+            with open(heroic_config_path, 'r', encoding='utf-8') as f:
+                heroic_config = json.load(f)
             
-            # Look for game directories in all possible locations
-            for heroic_path in existing_paths:
-                for game_dir in os.listdir(heroic_path):
-                    game_path = os.path.join(heroic_path, game_dir)
+            # Get the install path from config
+            default_install_path = heroic_config.get("settings", {}).get("defaultInstallPath")
+            if not default_install_path:
+                default_install_path = os.path.expanduser("~/Games/Heroic")  # Fallback
+            
+            decky.logger.info(f"Heroic games install path: {default_install_path}")
+            
+            # Get the list of recent games for quick reference
+            recent_games = heroic_config.get("games", {}).get("recent", [])
+            recent_games_map = {game.get("title"): game.get("appName") for game in recent_games if game.get("title") and game.get("appName")}
+            
+            # Find all game directories in the install path
+            games = []
+            if os.path.exists(default_install_path):
+                for game_dir in os.listdir(default_install_path):
+                    game_path = os.path.join(default_install_path, game_dir)
                     if os.path.isdir(game_path) and game_dir.lower() not in ["prefixes", "temp", "legendary", "gog", "state", "logs"]:
                         # This is likely a game directory
                         game_info = {
                             "name": game_dir,
                             "path": game_path
                         }
+                        
+                        # Check if this game is in the recent games list
+                        if game_dir in recent_games_map:
+                            game_info["app_id"] = recent_games_map[game_dir]
                         
                         # Try to find a better name from appinfo.json if it exists
                         appinfo_paths = [
@@ -415,88 +421,25 @@ class Plugin:
                                 except Exception as e:
                                     decky.logger.error(f"Error reading appinfo.json for {game_dir}: {str(e)}")
                         
-                        # Find main executable to help with matching
-                        exe_files = self._find_game_executables(game_path)
-                        if exe_files:
-                            main_exe = exe_files[0]  # Largest executable
-                            game_info["main_exe"] = os.path.basename(main_exe["path"])
+                        # Find and cache the config file information if available
+                        if "app_id" in game_info:
+                            # Check if there's a direct config file match
+                            games_config_dir = os.path.expanduser("~/.var/app/com.heroicgameslauncher.hgl/config/heroic/GamesConfig")
+                            for config_file in os.listdir(games_config_dir):
+                                if config_file.endswith(".json"):
+                                    config_file_path = os.path.join(games_config_dir, config_file)
+                                    try:
+                                        with open(config_file_path, 'r', encoding='utf-8') as f:
+                                            config_data = json.load(f)
+                                            # Check if app_id is a key in this config file
+                                            if game_info["app_id"] in config_data:
+                                                game_info["config_file"] = config_file
+                                                game_info["config_key"] = game_info["app_id"]
+                                                break
+                                    except Exception as e:
+                                        decky.logger.error(f"Error reading config file {config_file}: {str(e)}")
                         
                         games.append(game_info)
-            
-            # Try to match with config files if they exist
-            if os.path.exists(config_path):
-                config_matches = {}
-                
-                # First pass: Build a mapping of all config entries for easier access
-                for config_file in os.listdir(config_path):
-                    if config_file.endswith(".json"):
-                        config_file_path = os.path.join(config_path, config_file)
-                        try:
-                            with open(config_file_path, 'r', encoding='utf-8') as f:
-                                config_data = json.load(f)
-                                for key in config_data:
-                                    if key != "version" and key != "explicit":
-                                        config_entry = config_data[key]
-                                        # Store this config entry for later matching
-                                        config_matches[(config_file, key)] = config_entry
-                        except Exception as e:
-                            decky.logger.error(f"Error reading config file {config_file}: {str(e)}")
-                
-                # Second pass: Try to match each game with its config
-                for game in games:
-                    best_match = None
-                    best_score = 0
-                    game_name_norm = self._normalize_string(game["name"])
-                    
-                    for (config_file, config_key), config_entry in config_matches.items():
-                        match_score = 0
-                        
-                        # Check install path (most reliable)
-                        if "installPath" in config_entry and game["path"].lower() == config_entry["installPath"].lower():
-                            match_score += 15  # Direct path match is very strong
-                        
-                        # Check wine prefix
-                        if "winePrefix" in config_entry:
-                            prefix_game_name = os.path.basename(config_entry["winePrefix"])
-                            prefix_norm = self._normalize_string(prefix_game_name)
-                            
-                            if game_name_norm == prefix_norm:
-                                match_score += 10
-                            elif game_name_norm in prefix_norm or prefix_norm in game_name_norm:
-                                match_score += 5
-                        
-                        # Check app ID if available
-                        if "app_id" in game and "gameId" in config_entry:
-                            if game["app_id"] == str(config_entry["gameId"]):
-                                match_score += 15  # App ID match is very strong
-                        
-                        # Check executable name if available
-                        if "main_exe" in game and "targetExe" in config_entry:
-                            game_exe = os.path.basename(game["main_exe"])
-                            target_exe = os.path.basename(config_entry["targetExe"])
-                            
-                            if self._normalize_string(game_exe) == self._normalize_string(target_exe):
-                                match_score += 10
-                        
-                        # Check title or name fields
-                        name_fields = ["title", "name", "gameName"]
-                        for field in name_fields:
-                            if field in config_entry and isinstance(config_entry[field], str):
-                                field_norm = self._normalize_string(config_entry[field])
-                                if game_name_norm == field_norm:
-                                    match_score += 8
-                                elif game_name_norm in field_norm or field_norm in game_name_norm:
-                                    match_score += 4
-                        
-                        # Update best match if this is better
-                        if match_score > best_score:
-                            best_score = match_score
-                            best_match = (config_file, config_key)
-                    
-                    # If we found a good match, add the config info to the game
-                    if best_match and best_score >= 5:
-                        game["config_file"] = best_match[0]
-                        game["config_key"] = best_match[1]
             
             # Sort games alphabetically by name
             games.sort(key=lambda g: g["name"].lower())
@@ -504,6 +447,243 @@ class Plugin:
             return {"status": "success", "games": games}
         except Exception as e:
             decky.logger.error(f"Error finding Heroic games: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    async def find_heroic_game_config(self, game_path: str, game_name: str) -> dict:
+        """
+        Find the config file and key for a Heroic game using the config.json file
+        """
+        try:
+            decky.logger.info(f"Finding config for Heroic game: {game_name} at {game_path}")
+            
+            # First, try to read the Heroic config file
+            heroic_config_path = os.path.expanduser("~/.var/app/com.heroicgameslauncher.hgl/config/heroic/store/config.json")
+            if os.path.exists(heroic_config_path):
+                with open(heroic_config_path, 'r', encoding='utf-8') as f:
+                    heroic_config = json.load(f)
+                
+                # Get the list of recent games
+                recent_games = heroic_config.get("games", {}).get("recent", [])
+                
+                # Normalize game name by removing spaces, making lowercase
+                normalized_game_name = game_name.lower().replace(" ", "")
+                
+                # Look for a match by title with flexible matching
+                for game in recent_games:
+                    game_title = game.get("title", "")
+                    normalized_title = game_title.lower().replace(" ", "")
+                    
+                    # Try multiple matching approaches
+                    if (game.get("title") == game_name or  # Exact match
+                        normalized_title == normalized_game_name or  # Normalized match
+                        game_name in game_title or  # Partial match
+                        normalized_game_name in normalized_title):  # Normalized partial match
+                        
+                        app_name = game.get("appName")
+                        if app_name:
+                            decky.logger.info(f"Found appName in config.json for '{game_title}': {app_name}")
+                            
+                            # Now look for this appName in the GamesConfig directory
+                            games_config_dir = os.path.expanduser("~/.var/app/com.heroicgameslauncher.hgl/config/heroic/GamesConfig")
+                            for config_file in os.listdir(games_config_dir):
+                                if not config_file.endswith(".json"):
+                                    continue
+                                    
+                                config_file_path = os.path.join(games_config_dir, config_file)
+                                try:
+                                    with open(config_file_path, 'r', encoding='utf-8') as f:
+                                        config_data = json.load(f)
+                                        
+                                        if app_name in config_data:
+                                            decky.logger.info(f"Found config file: {config_file}, key: {app_name}")
+                                            return {
+                                                "status": "success",
+                                                "config_file": config_file,
+                                                "config_key": app_name
+                                            }
+                                except Exception as e:
+                                    decky.logger.error(f"Error reading config file {config_file}: {str(e)}")
+                
+                # If direct matching failed, try checking winePrefix paths in all config files
+                decky.logger.info("Trying to match using winePrefix paths...")
+                games_config_dir = os.path.expanduser("~/.var/app/com.heroicgameslauncher.hgl/config/heroic/GamesConfig")
+                
+                for config_file in os.listdir(games_config_dir):
+                    if not config_file.endswith(".json"):
+                        continue
+                        
+                    config_file_path = os.path.join(games_config_dir, config_file)
+                    try:
+                        with open(config_file_path, 'r', encoding='utf-8') as f:
+                            config_data = json.load(f)
+                            
+                            # Check each game config
+                            for app_key, app_config in config_data.items():
+                                # Check winePrefix path
+                                wine_prefix = app_config.get("winePrefix", "")
+                                if wine_prefix:
+                                    # Extract game name from winePrefix path
+                                    prefix_game_name = os.path.basename(wine_prefix)
+                                    
+                                    # Compare with our game name
+                                    if (prefix_game_name == game_name or
+                                        prefix_game_name.lower().replace(" ", "") == normalized_game_name or
+                                        game_name in prefix_game_name or
+                                        normalized_game_name in prefix_game_name.lower().replace(" ", "")):
+                                        
+                                        decky.logger.info(f"Found match via winePrefix: {wine_prefix}")
+                                        decky.logger.info(f"Config file: {config_file}, key: {app_key}")
+                                        return {
+                                            "status": "success",
+                                            "config_file": config_file,
+                                            "config_key": app_key
+                                        }
+                    except Exception as e:
+                        decky.logger.error(f"Error reading config file {config_file}: {str(e)}")
+            
+            # Fall back to checking for executable name matches
+            decky.logger.info("Trying to match using executable names...")
+            
+            # Find the executable directory
+            exe_dir = self._find_heroic_game_executable_directory(game_path)
+            if not exe_dir:
+                exe_dir = game_path
+                
+            # Find executable files
+            exe_files = []
+            for file in os.listdir(exe_dir):
+                if file.lower().endswith(".exe") and not any(skip in file.lower() for skip in 
+                                                        ["unins", "launcher", "crash", "setup", "config", "redist"]):
+                    exe_files.append(file)
+                    
+            if exe_files:
+                # Use the executable name for matching
+                exe_name = os.path.splitext(exe_files[0])[0].lower()
+                decky.logger.info(f"Using executable name for matching: {exe_name}")
+                
+                # Check all config files for matches
+                games_config_dir = os.path.expanduser("~/.var/app/com.heroicgameslauncher.hgl/config/heroic/GamesConfig")
+                for config_file in os.listdir(games_config_dir):
+                    if not config_file.endswith(".json"):
+                        continue
+                        
+                    config_file_path = os.path.join(games_config_dir, config_file)
+                    try:
+                        with open(config_file_path, 'r', encoding='utf-8') as f:
+                            config_data = json.load(f)
+                            
+                            # Check all games in this config
+                            for app_key, app_config in config_data.items():
+                                # Get game info from config
+                                game_info = app_config.get("game", {})
+                                config_title = game_info.get("title", "").lower()
+                                
+                                # Try to match by executable name
+                                if (exe_name in config_title or
+                                    exe_name.replace("_", "") in config_title.replace(" ", "") or
+                                    config_title in exe_name):
+                                    
+                                    decky.logger.info(f"Found match via executable name: {exe_name} matches '{config_title}'")
+                                    decky.logger.info(f"Config file: {config_file}, key: {app_key}")
+                                    return {
+                                        "status": "success",
+                                        "config_file": config_file,
+                                        "config_key": app_key
+                                    }
+                    except Exception as e:
+                        decky.logger.error(f"Error reading config file {config_file}: {str(e)}")
+                        
+            # As a last resort, check all config files and try to match install path
+            decky.logger.info("Trying to match using install path...")
+            games_config_dir = os.path.expanduser("~/.var/app/com.heroicgameslauncher.hgl/config/heroic/GamesConfig")
+            for config_file in os.listdir(games_config_dir):
+                if not config_file.endswith(".json"):
+                    continue
+                    
+                config_file_path = os.path.join(games_config_dir, config_file)
+                try:
+                    with open(config_file_path, 'r', encoding='utf-8') as f:
+                        config_data = json.load(f)
+                        
+                        # Check all games in this config
+                        for app_key, app_config in config_data.items():
+                            install_path = app_config.get("installPath", "")
+                            if install_path and (install_path == game_path or 
+                                                os.path.basename(install_path) == os.path.basename(game_path)):
+                                
+                                decky.logger.info(f"Found match via install path: {install_path}")
+                                decky.logger.info(f"Config file: {config_file}, key: {app_key}")
+                                return {
+                                    "status": "success",
+                                    "config_file": config_file,
+                                    "config_key": app_key
+                                }
+                except Exception as e:
+                    decky.logger.error(f"Error reading config file {config_file}: {str(e)}")
+            
+            # If we still couldn't find a match, look for appinfo.json
+            return {"status": "error", "message": f"Could not find config for game: {game_name}"}
+        except Exception as e:
+            decky.logger.error(f"Error finding Heroic game config: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    async def update_heroic_config(self, config_file: str, config_key: str, dll_override: str) -> dict:
+        """Update Heroic game configuration with WINEDLLOVERRIDES for ReShade or ENABLE_VKBASALT for VkBasalt"""
+        try:
+            config_path = os.path.expanduser("~/.var/app/com.heroicgameslauncher.hgl/config/heroic/GamesConfig/")
+            config_file_path = os.path.join(config_path, config_file)
+            
+            if not os.path.exists(config_file_path):
+                return {"status": "error", "message": f"Config file not found: {config_file}"}
+                
+            # Read the config file
+            with open(config_file_path, 'r', encoding='utf-8') as f:
+                config_data = json.load(f)
+                
+            if config_key not in config_data:
+                return {"status": "error", "message": f"Game config key '{config_key}' not found in config file"}
+                
+            # Check if environmentOptions exists (note: it's "environmentOptions" in newer versions, not "enviromentOptions")
+            env_key = "environmentOptions" if "environmentOptions" in config_data[config_key] else "enviromentOptions"
+            
+            if env_key not in config_data[config_key]:
+                config_data[config_key][env_key] = []
+            
+            # Special case for VkBasalt
+            if dll_override == "vkbasalt":
+                # Remove any existing ENABLE_VKBASALT
+                config_data[config_key][env_key] = [
+                    env for env in config_data[config_key][env_key] 
+                    if env.get("key") != "ENABLE_VKBASALT"
+                ]
+                
+                # Add ENABLE_VKBASALT=1
+                config_data[config_key][env_key].append({
+                    "key": "ENABLE_VKBASALT",
+                    "value": "1"
+                })
+            else:
+                # Normal ReShade case - handle WINEDLLOVERRIDES
+                # Remove any existing WINEDLLOVERRIDES
+                config_data[config_key][env_key] = [
+                    env for env in config_data[config_key][env_key] 
+                    if env.get("key") != "WINEDLLOVERRIDES"
+                ]
+                
+                # Add new WINEDLLOVERRIDES if not removing
+                if dll_override != "remove":
+                    config_data[config_key][env_key].append({
+                        "key": "WINEDLLOVERRIDES",
+                        "value": f"d3dcompiler_47=n;{dll_override}=n,b"
+                    })
+            
+            # Write back the updated config
+            with open(config_file_path, 'w', encoding='utf-8') as f:
+                json.dump(config_data, f, indent=2)
+                
+            return {"status": "success", "output": f"Updated Heroic config with {dll_override} override."}
+        except Exception as e:
+            decky.logger.error(f"Error updating Heroic config: {str(e)}")
             return {"status": "error", "message": str(e)}
 
     async def install_reshade_for_heroic_game(self, game_path: str, dll_override: str = "d3d9") -> dict:
@@ -839,366 +1019,6 @@ class Plugin:
             decky.logger.error(f"Error uninstalling ReShade: {str(e)}")
             return {"status": "error", "message": str(e)}
 
-    async def update_heroic_config(self, config_file: str, config_key: str, dll_override: str) -> dict:
-        """Update Heroic game configuration with WINEDLLOVERRIDES for ReShade or ENABLE_VKBASALT for VkBasalt"""
-        try:
-            config_path = os.path.expanduser("~/.var/app/com.heroicgameslauncher.hgl/config/heroic/GamesConfig/")
-            config_file_path = os.path.join(config_path, config_file)
-            
-            if not os.path.exists(config_file_path):
-                return {"status": "error", "message": f"Config file not found: {config_file}"}
-                
-            # Read the config file
-            with open(config_file_path, 'r', encoding='utf-8') as f:
-                config_data = json.load(f)
-                
-            if config_key not in config_data:
-                return {"status": "error", "message": f"Game config key '{config_key}' not found in config file"}
-                
-            # Check if enviromentOptions exists
-            if "enviromentOptions" not in config_data[config_key]:
-                config_data[config_key]["enviromentOptions"] = []
-            
-            # Special case for VkBasalt
-            if dll_override == "vkbasalt":
-                # Remove any existing ENABLE_VKBASALT
-                config_data[config_key]["enviromentOptions"] = [
-                    env for env in config_data[config_key]["enviromentOptions"] 
-                    if env.get("key") != "ENABLE_VKBASALT"
-                ]
-                
-                # Add ENABLE_VKBASALT=1
-                config_data[config_key]["enviromentOptions"].append({
-                    "key": "ENABLE_VKBASALT",
-                    "value": "1"
-                })
-            else:
-                # Normal ReShade case - handle WINEDLLOVERRIDES
-                # Remove any existing WINEDLLOVERRIDES
-                config_data[config_key]["enviromentOptions"] = [
-                    env for env in config_data[config_key]["enviromentOptions"] 
-                    if env.get("key") != "WINEDLLOVERRIDES"
-                ]
-                
-                # Add new WINEDLLOVERRIDES if not removing
-                if dll_override != "remove":
-                    config_data[config_key]["enviromentOptions"].append({
-                        "key": "WINEDLLOVERRIDES",
-                        "value": f"d3dcompiler_47=n;{dll_override}=n,b"
-                    })
-            
-            # Write back the updated config
-            with open(config_file_path, 'w', encoding='utf-8') as f:
-                json.dump(config_data, f, indent=2)
-                
-            return {"status": "success", "output": f"Updated Heroic config with {dll_override} override."}
-        except Exception as e:
-            decky.logger.error(f"Error updating Heroic config: {str(e)}")
-            return {"status": "error", "message": str(e)}
-
-    async def find_heroic_game_config(self, game_path: str, game_name: str) -> dict:
-        """
-        Find the config file and key for a Heroic game using multiple robust detection strategies.
-        This enhanced version handles edge cases like spaces, special characters, and unusual naming conventions.
-        """
-        try:
-            decky.logger.info(f"Finding config for Heroic game: {game_name} at {game_path}")
-            config_path = os.path.expanduser("~/.var/app/com.heroicgameslauncher.hgl/config/heroic/GamesConfig/")
-            
-            if not os.path.exists(config_path):
-                return {"status": "error", "message": "Heroic config directory not found"}
-            
-            # STRATEGY 0: Collect all game identifiers from various sources
-            game_identifiers = set()
-            
-            # Normalize and add game name
-            game_name_norm = self._normalize_string(game_name)
-            game_identifiers.add(game_name_norm)
-            
-            # Add directory name
-            game_dir_name = os.path.basename(game_path)
-            game_dir_norm = self._normalize_string(game_dir_name)
-            game_identifiers.add(game_dir_norm)
-            
-            # Find parent directory name (sometimes more accurate)
-            parent_dir = os.path.basename(os.path.dirname(game_path))
-            if parent_dir and parent_dir not in ["Games", "Heroic", "Home", "deck"]:
-                parent_dir_norm = self._normalize_string(parent_dir)
-                game_identifiers.add(parent_dir_norm)
-            
-            # Extract individual words for partial matching
-            all_words = set()
-            for identifier in game_identifiers:
-                words = identifier.split()
-                all_words.update(words)
-            
-            # Remove common words that might cause false matches
-            common_words = {"the", "a", "an", "of", "and", "for", "in", "on", "to", "with", "game"}
-            significant_words = {word for word in all_words if len(word) > 2 and word not in common_words}
-            
-            decky.logger.info(f"Game identifiers: {game_identifiers}")
-            decky.logger.info(f"Significant words: {significant_words}")
-            
-            # Collect executable names
-            exe_details = self._find_game_executables(game_path)
-            for exe in exe_details:
-                # Add executable names without extension
-                exe_name = os.path.splitext(os.path.basename(exe["path"]))[0]
-                exe_name_norm = self._normalize_string(exe_name)
-                game_identifiers.add(exe_name_norm)
-                
-                # Add individual words from executable names
-                exe_words = exe_name_norm.split()
-                significant_words.update(word for word in exe_words if len(word) > 2 and word not in common_words)
-                
-            # Check for appinfo.json which might contain additional identifiers
-            appinfo_paths = [
-                os.path.join(game_path, "appinfo.json"),
-                os.path.join(game_path, ".egstore", "appinfo.json"),
-                os.path.join(os.path.dirname(game_path), ".egstore", "appinfo.json")
-            ]
-            
-            for appinfo_path in appinfo_paths:
-                if os.path.exists(appinfo_path):
-                    try:
-                        with open(appinfo_path, 'r', encoding='utf-8') as f:
-                            appinfo = json.load(f)
-                            if "AppName" in appinfo:
-                                app_name_norm = self._normalize_string(appinfo["AppName"])
-                                game_identifiers.add(app_name_norm)
-                            if "DisplayName" in appinfo:
-                                display_name_norm = self._normalize_string(appinfo["DisplayName"])
-                                game_identifiers.add(display_name_norm)
-                            if "AppId" in appinfo:
-                                app_id = str(appinfo["AppId"])
-                                game_identifiers.add(app_id)
-                    except Exception as e:
-                        decky.logger.error(f"Error reading appinfo.json: {str(e)}")
-            
-            # Store potential matches with scores
-            potential_matches = []
-            
-            # STRATEGY 1: Scan all config files
-            for config_file in os.listdir(config_path):
-                if not config_file.endswith(".json"):
-                    continue
-                    
-                config_file_path = os.path.join(config_path, config_file)
-                try:
-                    with open(config_file_path, 'r', encoding='utf-8') as f:
-                        config_data = json.load(f)
-                        
-                        # Look through each key in the config
-                        for key in config_data:
-                            if key in ["version", "explicit"]:
-                                continue
-                            
-                            config_entry = config_data[key]
-                            match_score = 0
-                            match_details = []
-                            match_strings = set()
-                            
-                            # Collect all potential identifiers from the config entry
-                            self._extract_config_identifiers(config_entry, match_strings)
-                            
-                            # Normalize all strings from config
-                            config_identifiers = {self._normalize_string(s) for s in match_strings if s}
-                            
-                            # Direct match with any game identifier
-                            for game_id in game_identifiers:
-                                for config_id in config_identifiers:
-                                    if game_id == config_id:
-                                        match_score += 10
-                                        match_details.append(f"Direct match: {game_id} == {config_id}")
-                                    elif game_id in config_id:
-                                        match_score += 5
-                                        match_details.append(f"Contained match: {game_id} in {config_id}")
-                                    elif config_id in game_id:
-                                        match_score += 5
-                                        match_details.append(f"Contained match: {config_id} in {game_id}")
-                            
-                            # Check for word-level matches with significant words
-                            for config_id in config_identifiers:
-                                config_words = config_id.split()
-                                matching_words = significant_words.intersection(config_words)
-                                if matching_words:
-                                    match_score += len(matching_words) * 2
-                                    match_details.append(f"Word matches: {', '.join(matching_words)}")
-                            
-                            # Check key directly (often contains game ID or name)
-                            key_norm = self._normalize_string(key)
-                            for game_id in game_identifiers:
-                                if game_id == key_norm:
-                                    match_score += 8
-                                    match_details.append(f"Key match: {key}")
-                                elif game_id in key_norm:
-                                    match_score += 4
-                                    match_details.append(f"Key contains game ID: {key}")
-                                elif key_norm in game_id:
-                                    match_score += 3
-                                    match_details.append(f"Game ID contains key: {key}")
-                            
-                            # Path matching is very reliable when it exists
-                            if "installPath" in config_entry:
-                                install_path = config_entry["installPath"]
-                                if game_path.lower() == install_path.lower():
-                                    match_score += 15  # Perfect path match is strongest
-                                    match_details.append(f"Perfect installPath match")
-                                elif game_path.lower() in install_path.lower():
-                                    match_score += 7
-                                    match_details.append(f"Game path contained in installPath")
-                                elif install_path.lower() in game_path.lower():
-                                    match_score += 7
-                                    match_details.append(f"installPath contained in game path")
-                            
-                            # Check for executable matches with main executables
-                            if "targetExe" in config_entry and exe_details:
-                                target_exe = config_entry["targetExe"]
-                                target_name = os.path.splitext(os.path.basename(target_exe))[0]
-                                target_norm = self._normalize_string(target_name)
-                                
-                                for exe in exe_details:
-                                    exe_name = os.path.splitext(os.path.basename(exe["path"]))[0]
-                                    exe_norm = self._normalize_string(exe_name)
-                                    
-                                    if exe_norm == target_norm:
-                                        match_score += 10
-                                        match_details.append(f"Executable match: {exe_name} == {target_name}")
-                                    elif exe_norm in target_norm or target_norm in exe_norm:
-                                        match_score += 5
-                                        match_details.append(f"Partial executable match: {exe_name} and {target_name}")
-                            
-                            # If we have a decent match, add it to potential matches
-                            if match_score > 0:
-                                potential_matches.append({
-                                    "config_file": config_file,
-                                    "config_key": key,
-                                    "score": match_score,
-                                    "details": match_details
-                                })
-                except Exception as e:
-                    decky.logger.error(f"Error processing config file {config_file}: {str(e)}")
-            
-            # Sort potential matches by score (highest first)
-            potential_matches.sort(key=lambda x: x["score"], reverse=True)
-            
-            # Log what we found
-            for match in potential_matches:
-                decky.logger.info(f"Potential config match: {match['config_file']} / {match['config_key']} (Score: {match['score']})")
-                for detail in match['details']:
-                    decky.logger.info(f"  - {detail}")
-            
-            # Return the best match if we have one
-            if potential_matches:
-                best_match = potential_matches[0]
-                decky.logger.info(f"Best config match: {best_match['config_file']} / {best_match['config_key']} (Score: {best_match['score']})")
-                return {
-                    "status": "success",
-                    "config_file": best_match["config_file"],
-                    "config_key": best_match["config_key"],
-                    "score": best_match["score"],
-                    "details": best_match["details"]
-                }
-                        
-            return {"status": "error", "message": f"Could not find config for game: {game_name}"}
-        except Exception as e:
-            decky.logger.error(f"Error finding Heroic game config: {str(e)}")
-            return {"status": "error", "message": str(e)}
-
-    def _normalize_string(self, text):
-        """Normalize a string for consistent comparison"""
-        if not text or not isinstance(text, str):
-            return ""
-        
-        # Convert to lowercase
-        text = text.lower()
-        
-        # Replace common separators with spaces
-        for char in ["-", "_", ".", ","]:
-            text = text.replace(char, " ")
-        
-        # Remove special characters
-        text = ''.join(c for c in text if c.isalnum() or c.isspace())
-        
-        # Collapse multiple spaces
-        while "  " in text:
-            text = text.replace("  ", " ")
-        
-        # Trim leading/trailing spaces
-        return text.strip()
-
-    def _extract_config_identifiers(self, config_entry, match_strings):
-        """Extract all potential identifiers from a config entry"""
-        # Fields that might contain game identifiers
-        identifier_fields = [
-            "title", "name", "gameName", "game_name", "displayName", "displayTitle",
-            "appName", "appTitle", "shortName", "gameID", "gameId", "appID", "appId"
-        ]
-        
-        # Recursively extract strings from nested structure
-        if isinstance(config_entry, dict):
-            # First check known identifier fields
-            for field in identifier_fields:
-                if field in config_entry and isinstance(config_entry[field], str):
-                    match_strings.add(config_entry[field])
-            
-            # Also check wine prefix for game name
-            if "winePrefix" in config_entry and isinstance(config_entry["winePrefix"], str):
-                prefix_game_name = os.path.basename(config_entry["winePrefix"])
-                match_strings.add(prefix_game_name)
-            
-            # Look through all other fields
-            for key, value in config_entry.items():
-                if isinstance(value, str):
-                    # Add all string values as potential matches
-                    match_strings.add(value)
-                    
-                    # Extract substrings that might be paths
-                    if "/" in value or "\\" in value:
-                        parts = value.replace("\\", "/").split("/")
-                        for part in parts:
-                            if part and not part.startswith("$") and len(part) > 3:
-                                match_strings.add(part)
-                
-                elif isinstance(value, (dict, list)):
-                    self._extract_config_identifiers(value, match_strings)
-                    
-        elif isinstance(config_entry, list):
-            for item in config_entry:
-                self._extract_config_identifiers(item, match_strings)
-
-    def _find_game_executables(self, game_path):
-        """Find and analyze executable files in the game directory"""
-        exe_files = []
-        
-        # Walk through the directory looking for executables
-        for root, _, files in os.walk(game_path):
-            for file in files:
-                if not file.lower().endswith(".exe"):
-                    continue
-                    
-                # Skip utility executables
-                if any(skip in file.lower() for skip in ["unins", "launcher", "crash", "setup", "config", "redist"]):
-                    continue
-                    
-                exe_path = os.path.join(root, file)
-                try:
-                    file_size = os.path.getsize(exe_path)
-                    # Only consider executables of reasonable size
-                    if file_size > 100 * 1024:  # Larger than 100KB
-                        exe_files.append({
-                            "path": exe_path,
-                            "size": file_size,
-                            "name": file
-                        })
-                except Exception:
-                    pass
-        
-        # Sort by file size (largest first) as main executables tend to be larger
-        exe_files.sort(key=lambda x: x["size"], reverse=True)
-        
-        return exe_files
-
     async def detect_heroic_game_api(self, game_path: str) -> dict:
         """Detect the best API/DLL override for a Heroic game"""
         try:
@@ -1327,117 +1147,6 @@ class Plugin:
         except Exception as e:
             decky.logger.error(f"Error detecting API for Heroic game: {str(e)}")
             return {"status": "error", "message": str(e)}
-
-    async def search_heroic_config_by_identifier(self, identifier: str) -> dict:
-        """
-        Search for a Heroic config by any identifier (game ID, name, path, etc.)
-        This is useful as a fallback when other methods fail.
-        """
-        try:
-            config_path = os.path.expanduser("~/.var/app/com.heroicgameslauncher.hgl/config/heroic/GamesConfig/")
-            
-            if not os.path.exists(config_path):
-                return {"status": "error", "message": "Heroic config directory not found"}
-                
-            identifier_norm = self._normalize_string(identifier)
-            potential_matches = []
-            
-            # Check each config file
-            for config_file in os.listdir(config_path):
-                if not config_file.endswith(".json"):
-                    continue
-                    
-                config_file_path = os.path.join(config_path, config_file)
-                try:
-                    with open(config_file_path, 'r', encoding='utf-8') as f:
-                        config_data = json.load(f)
-                        
-                        # Look through each game entry
-                        for key in config_data:
-                            if key in ["version", "explicit"]:
-                                continue
-                                
-                            config_entry = config_data[key]
-                            match_score = 0
-                            match_details = []
-                            
-                            # Try direct key match
-                            key_norm = self._normalize_string(key)
-                            if identifier_norm == key_norm:
-                                match_score += 10
-                                match_details.append(f"Key match: {key}")
-                            elif identifier_norm in key_norm:
-                                match_score += 5
-                                match_details.append(f"Key contains identifier: {key}")
-                            
-                            # Check all string values recursively
-                            all_strings = self._extract_all_strings(config_entry)
-                            
-                            for s in all_strings:
-                                s_norm = self._normalize_string(s)
-                                if s_norm and identifier_norm == s_norm:
-                                    match_score += 10
-                                    match_details.append(f"Direct match: {s}")
-                                elif s_norm and identifier_norm in s_norm:
-                                    match_score += 3
-                                    match_details.append(f"Contained match: {identifier} in {s}")
-                                elif s_norm and s_norm in identifier_norm:
-                                    match_score += 2
-                                    match_details.append(f"Contained match: {s} in {identifier}")
-                            
-                            # If we have a decent match, add it to potential matches
-                            if match_score > 0:
-                                potential_matches.append({
-                                    "config_file": config_file,
-                                    "config_key": key,
-                                    "score": match_score,
-                                    "details": match_details
-                                })
-                except Exception as e:
-                    decky.logger.error(f"Error processing config file {config_file}: {str(e)}")
-            
-            # Sort potential matches by score (highest first)
-            potential_matches.sort(key=lambda x: x["score"], reverse=True)
-            
-            # Return the best match if we have one
-            if potential_matches:
-                best_match = potential_matches[0]
-                return {
-                    "status": "success",
-                    "config_file": best_match["config_file"],
-                    "config_key": best_match["config_key"],
-                    "score": best_match["score"],
-                    "details": best_match["details"]
-                }
-            
-            return {"status": "error", "message": f"No config found for identifier: {identifier}"}
-        except Exception as e:
-            decky.logger.error(f"Error searching Heroic config: {str(e)}")
-            return {"status": "error", "message": str(e)}
-
-    def _extract_all_strings(self, obj, max_depth=5):
-        """Extract all string values from a nested object"""
-        if max_depth <= 0:
-            return []
-            
-        result = []
-        
-        if isinstance(obj, str):
-            result.append(obj)
-        elif isinstance(obj, dict):
-            for value in obj.values():
-                if isinstance(value, str):
-                    result.append(value)
-                elif isinstance(value, (dict, list)) and max_depth > 1:
-                    result.extend(self._extract_all_strings(value, max_depth - 1))
-        elif isinstance(obj, list):
-            for item in obj:
-                if isinstance(item, str):
-                    result.append(item)
-                elif isinstance(item, (dict, list)) and max_depth > 1:
-                    result.extend(self._extract_all_strings(item, max_depth - 1))
-        
-        return result
 
     async def log_error(self, error: str) -> None:
         decky.logger.error(f"FRONTEND: {error}")
