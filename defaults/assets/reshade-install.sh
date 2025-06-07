@@ -14,10 +14,23 @@ GLOBAL_INI=${GLOBAL_INI:-"ReShade.ini"}
 RESHADE_VERSION=${RESHADE_VERSION:-"latest"}  # New: version selection
 RESHADE_ADDON_SUPPORT=${RESHADE_ADDON_SUPPORT:-0}
 
-# Get the correct path to the bin directory
-# Extract the plugin root path from the script path
+# Get the correct path to the bin directory - check both possible locations
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
-PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"  # Go up two directories from assets
+
+# Check if we're in defaults/assets (development)
+if [[ "$SCRIPT_DIR" == */defaults/assets ]]; then
+    PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"  # Go up two directories from defaults/assets
+    log_message() { echo "[DEBUG] Using defaults/assets path: $1" >&2; }
+# Check if we're in assets (decky store)
+elif [[ "$SCRIPT_DIR" == */assets ]]; then
+    PLUGIN_ROOT="$(dirname "$SCRIPT_DIR")"  # Go up one directory from assets
+    log_message() { echo "[DEBUG] Using assets path: $1" >&2; }
+else
+    # Fallback - assume we're in assets
+    PLUGIN_ROOT="$(dirname "$SCRIPT_DIR")"
+    log_message() { echo "[DEBUG] Using fallback path: $1" >&2; }
+fi
+
 BIN_PATH="$PLUGIN_ROOT/bin"
 
 log_message() {
@@ -61,6 +74,8 @@ setup_d3dcompiler() {
     # Check if bin directory and file exist
     if [[ ! -d "$BIN_PATH" ]]; then
         log_message "Error: Bin directory not found at $BIN_PATH"
+        log_message "Script directory: $SCRIPT_DIR"
+        log_message "Plugin root: $PLUGIN_ROOT"
         exit 1
     fi
     
