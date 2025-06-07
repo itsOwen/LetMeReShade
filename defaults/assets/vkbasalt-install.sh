@@ -6,10 +6,20 @@ XDG_DATA_HOME=${XDG_DATA_HOME:-"$HOME/.local/share"}
 VKBASALT_PATH=${VKBASALT_PATH:-"$XDG_DATA_HOME/vkbasalt/installation"}
 VKBASALT_BASE=${VKBASALT_PATH%/*}  # Parent directory of installation
 
-# Get the correct path to the bin directory
-# Extract the plugin root path from the script path
+# Get the correct path to the bin directory - check both possible locations
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
-PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"  # Go up two directories from assets
+
+# Check if we're in defaults/assets (development)
+if [[ "$SCRIPT_DIR" == */defaults/assets ]]; then
+    PLUGIN_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"  # Go up two directories from defaults/assets
+# Check if we're in assets (decky store)
+elif [[ "$SCRIPT_DIR" == */assets ]]; then
+    PLUGIN_ROOT="$(dirname "$SCRIPT_DIR")"  # Go up one directory from assets
+else
+    # Fallback - assume we're in assets
+    PLUGIN_ROOT="$(dirname "$SCRIPT_DIR")"
+fi
+
 BIN_PATH="$PLUGIN_ROOT/bin"
 
 log_message() {
