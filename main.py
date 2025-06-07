@@ -18,7 +18,7 @@ class Plugin:
             'DELETE_RESHADE_FILES': '0',
             'FORCE_RESHADE_UPDATE_CHECK': '0',
             'RESHADE_ADDON_SUPPORT': '0',
-            'RESHADE_VERSION': 'latest'  # New environment variable for version
+            'RESHADE_VERSION': 'latest'  
         }
         # Separate base paths for ReShade and VkBasalt
         self.main_path = os.path.join(self.environment['XDG_DATA_HOME'], 'reshade')
@@ -29,8 +29,28 @@ class Plugin:
         os.makedirs(self.main_path, exist_ok=True)
         os.makedirs(self.vkbasalt_path, exist_ok=True)
 
+    def _get_assets_dir(self) -> Path:
+        """Get the assets directory, checking both possible locations"""
+        plugin_dir = Path(decky.DECKY_PLUGIN_DIR)
+        
+        # Check defaults/assets first (development)
+        defaults_assets = plugin_dir / "defaults" / "assets"
+        if defaults_assets.exists():
+            decky.logger.info(f"Using assets from: {defaults_assets}")
+            return defaults_assets
+            
+        # Check assets (decky store installation)
+        assets = plugin_dir / "assets"
+        if assets.exists():
+            decky.logger.info(f"Using assets from: {assets}")
+            return assets
+            
+        # Fallback to defaults/assets even if it doesn't exist (for error reporting)
+        decky.logger.warning(f"Neither {defaults_assets} nor {assets} exists, defaulting to {defaults_assets}")
+        return defaults_assets
+
     async def _main(self):
-        assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
+        assets_dir = self._get_assets_dir()
         for script in assets_dir.glob("*.sh"):
             script.chmod(0o755)
         decky.logger.info("ReShade plugin loaded")
@@ -161,7 +181,7 @@ class Plugin:
 
     async def run_install_reshade(self, with_addon: bool = False, version: str = "latest") -> dict:
         try:
-            assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
+            assets_dir = self._get_assets_dir()
             script_path = assets_dir / "reshade-install.sh"
 
             if not script_path.exists():
@@ -224,7 +244,7 @@ class Plugin:
 
     async def run_install_vkbasalt(self) -> dict:
         try:
-            assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
+            assets_dir = self._get_assets_dir()
             script_path = assets_dir / "vkbasalt-install.sh"
             
             if not script_path.exists():
@@ -256,7 +276,7 @@ class Plugin:
 
     async def run_uninstall_reshade(self) -> dict:
         try:
-            assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
+            assets_dir = self._get_assets_dir()
             script_path = assets_dir / "reshade-uninstall.sh"
             
             if not script_path.exists():
@@ -288,7 +308,7 @@ class Plugin:
 
     async def run_uninstall_vkbasalt(self) -> dict:
         try:
-            assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
+            assets_dir = self._get_assets_dir()
             script_path = assets_dir / "vkbasalt-uninstall.sh"
             
             if not script_path.exists():
@@ -469,7 +489,7 @@ class Plugin:
 
     async def manage_game_reshade(self, appid: str, action: str, dll_override: str = "dxgi", vulkan_mode: str = "") -> dict:
         try:
-            assets_dir = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "assets"
+            assets_dir = self._get_assets_dir()
             script_path = assets_dir / "reshade-game-manager.sh"
             
             try:
