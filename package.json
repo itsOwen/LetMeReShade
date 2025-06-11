@@ -1,6 +1,6 @@
 {
   "name": "letmereshade-decky",
-  "version": "1.1",
+  "version": "1.2",
   "description": "ReShade plugin for Steam Deck - Enhanced version with improved shader and game management",
   "type": "module",
   "scripts": {
@@ -53,22 +53,22 @@
     {
       "name": "reshade_latest.exe",
       "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/reshade_latest.exe",
-      "sha256hash": "503a2cef5a3a24400759d9559b36b9100574c09525d8ef1dba7b91b001ff1845"
+      "sha256hash": "c384e89427865e119db4daf18c2c225b951a4cd07dbff92b65caf68c2a95ace0"
     },
     {
       "name": "reshade_latest_addon.exe",
       "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/reshade_latest_addon.exe",
-      "sha256hash": "9ac89947607ebe01724f4f7a71788023fa458d12beed0435c8362190af1e5a6b"
+      "sha256hash": "3be164186103dcf126af3d75d8efdf850c4ed9f88919505c16a52e6d0ef135a7"
     },
     {
       "name": "reshade_last.exe",
       "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/reshade_last.exe",
-      "sha256hash": "0b974b8263b4a96276b83e86736729197eaa967ca7b3014b6dbc342f25be21ef"
+      "sha256hash": "503a2cef5a3a24400759d9559b36b9100574c09525d8ef1dba7b91b001ff1845"
     },
     {
       "name": "reshade_last_addon.exe",
       "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/reshade_last_addon.exe",
-      "sha256hash": "130800ad62ee9743f85f24542a7b97fd29b2c18d427f5ad3540cddfeb6ce6e62"
+      "sha256hash": "9ac89947607ebe01724f4f7a71788023fa458d12beed0435c8362190af1e5a6b"
     },
     {
       "name": "d3dcompiler_47.dll",

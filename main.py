@@ -551,7 +551,18 @@ class Plugin:
                         if game_info["appid"] and game_info["name"]:
                             games.append(game_info)
 
-            filtered_games = [g for g in games if "Proton" not in g["name"] and "Steam Linux Runtime" not in g["name"]]
+            # Filter out system components and redistributables that shouldn't be modded with ReShade
+            filtered_games = [g for g in games if not any(exclude in g["name"] for exclude in [
+                "Proton", 
+                "Steam Linux Runtime", 
+                "Steamworks Common Redistributables",
+                "DirectX",
+                "Visual C++",
+                "Microsoft Visual C++",
+                ".NET Framework",
+                "OpenXR"
+            ])]
+            
             return {"status": "success", "games": filtered_games}
 
         except Exception as e:
