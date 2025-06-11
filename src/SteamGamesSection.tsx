@@ -185,7 +185,7 @@ const SteamGamesSection = () => {
           strOKButtonText="Patch"
           strCancelButtonText="Cancel"
           onOK={async () => {
-            const dllValue = selectedDll.value === 'auto' ? 'dxgi' : selectedDll.value;
+            const dllValue = selectedDll.value;
             
             const response = await manageGameReShade(
               selectedGame.appid,
