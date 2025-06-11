@@ -239,8 +239,8 @@ main() {
             local arch=$(echo "$detection_result" | cut -d',' -f1)
             local detected_api=$(echo "$detection_result" | cut -d',' -f2)
             
-            # Use detected API unless user explicitly specified dxgi
-            if [ "$dll_override" = "dxgi" ]; then
+            # Use detected API only when auto-detection is requested
+            if [ "$dll_override" = "auto" ]; then
                 dll_override="$detected_api"
                 log_message "Using detected API: $dll_override"
             fi
