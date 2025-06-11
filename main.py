@@ -89,96 +89,6 @@ class Plugin:
         marker_file = Path(self.vkbasalt_base_path) / ".installed"
         return {"exists": marker_file.exists()}
 
-    def _find_game_path(self, appid: str) -> str:
-        steam_root = Path(decky.HOME) / ".steam" / "steam"
-        library_file = steam_root / "steamapps" / "libraryfolders.vdf"
-
-        if not library_file.exists():
-            raise ValueError(f"Steam library file not found: {library_file}")
-
-        library_paths = []
-        with open(library_file, "r", encoding="utf-8") as file:
-            for line in file:
-                if '"path"' in line:
-                    path = line.split('"path"')[1].strip().strip('"').replace("\\\\", "/")
-                    library_paths.append(path)
-
-        for library_path in library_paths:
-            manifest_path = Path(library_path) / "steamapps" / f"appmanifest_{appid}.acf"
-            if manifest_path.exists():
-                with open(manifest_path, "r", encoding="utf-8") as manifest:
-                    for line in manifest:
-                        if '"installdir"' in line:
-                            install_dir = line.split('"installdir"')[1].strip().strip('"')
-                            base_path = Path(library_path) / "steamapps" / "common" / install_dir
-                            
-                            # Get name of the game directory for smarter exe matching
-                            game_name = install_dir.lower().replace("_", " ").replace("-", " ")
-                            game_words = set(word.strip() for word in game_name.split())
-
-                            def score_executable(exe_path: Path) -> float:
-                                if not exe_path.is_file():
-                                    return 0
-                                    
-                                name = exe_path.stem.lower()
-                                score = 0
-
-                                if any(skip in name for skip in ["unins", "launcher", "crash", "setup", "config", "redist"]):
-                                    return 0
-
-                                try:
-                                    size = exe_path.stat().st_size
-                                    if size > 1024 * 1024 * 10:  # Larger than 10MB
-                                        score += 2
-                                    elif size < 1024 * 1024:  # Smaller than 1MB
-                                        score -= 1
-                                except:
-                                    pass
-
-                                name_words = set(word.strip() for word in name.split())
-                                matching_words = game_words.intersection(name_words)
-                                score += len(matching_words) * 2
-
-                                return score
-
-                            def find_best_exe(path: Path, max_depth=4) -> tuple[Path, float]:
-                                if not path.exists() or not path.is_dir():
-                                    return None, 0
-
-                                best_exe = None
-                                best_score = -1
-
-                                try:
-                                    for exe in path.glob("*.exe"):
-                                        score = score_executable(exe)
-                                        if score > best_score:
-                                            best_score = score
-                                            best_exe = exe.parent
-
-                                    if best_score < 3 and max_depth > 0:
-                                        for subdir in path.iterdir():
-                                            if subdir.is_dir():
-                                                sub_exe, sub_score = find_best_exe(subdir, max_depth - 1)
-                                                if sub_score > best_score:
-                                                    best_score = sub_score
-                                                    best_exe = sub_exe
-
-                                except (PermissionError, OSError):
-                                    pass
-
-                                return best_exe, best_score
-
-                            best_path, score = find_best_exe(base_path)
-                            
-                            if best_path and score > 0:
-                                decky.logger.info(f"Found game executable directory: {best_path} (score: {score})")
-                                return str(best_path)
-                            
-                            decky.logger.info(f"No suitable executable found, using base path: {base_path}")
-                            return str(base_path)
-
-        raise ValueError(f"Could not find installation directory for AppID: {appid}")
-
     async def run_install_reshade(self, with_addon: bool = False, version: str = "latest") -> dict:
         try:
             assets_dir = self._get_assets_dir()
@@ -1055,19 +965,101 @@ class Plugin:
             decky.logger.error(f"Error installing ReShade for Heroic game: {str(e)}")
             return {"status": "error", "message": str(e)}
 
-    def _find_heroic_game_executable_directory(self, game_path: str) -> str:
-        """Find the directory containing the game's main executable using smart detection"""
+    def _find_game_executable_directory(self, path: Path, game_name: str) -> tuple[Path, float]:
+        """
+        Unified function to find the game executable directory with smart detection
+        
+        Args:
+            path: Base path to search for game executables
+            game_name: Name of the game for matching
+            
+        Returns:
+            tuple[Path, float]: The best executable directory and its score
+        """
         try:
-            game_path = Path(game_path)
-            if not game_path.exists() or not game_path.is_dir():
-                return None
+            if not path.exists() or not path.is_dir():
+                return path, 0
                 
-            # Get name of the game directory for smarter exe matching
-            game_name = game_path.name.lower().replace("_", " ").replace("-", " ")
-            game_words = set(word.strip() for word in game_name.split())
+            # Extract words from game name for better matching
+            game_words = set(re.findall(r'\w+', game_name.lower()))
             
             decky.logger.info(f"Looking for executables for game: {game_name}")
             decky.logger.info(f"Game words for matching: {game_words}")
+            
+            def analyze_directory_content(dir_path: Path) -> float:
+                """Score a directory based on its content"""
+                if not dir_path.exists() or not dir_path.is_dir():
+                    return 0
+                    
+                score = 0
+                file_types = {'exe': 0, 'dll': 0, 'config': 0, 'asset': 0, 'setup': 0, 'redist': 0}
+                
+                try:
+                    # Count file types
+                    for file in dir_path.iterdir():
+                        if file.is_file():
+                            ext = file.suffix.lower()
+                            
+                            # Game binary files
+                            if ext == '.exe':
+                                file_types['exe'] += 1
+                            elif ext == '.dll':
+                                file_types['dll'] += 1
+                                
+                            # Game config and data files
+                            elif ext in ['.ini', '.cfg', '.xml', '.json', '.txt']:
+                                file_types['config'] += 1
+                                
+                            # Game asset files
+                            elif ext in ['.pak', '.dat', '.bsa', '.ba2', '.dds', '.tga', '.png', '.jpg']:
+                                file_types['asset'] += 1
+                                
+                            # Setup and redistributable files (negative indicators)
+                            elif ext in ['.msi', '.cab', '.msm']:
+                                file_types['setup'] += 1
+                            
+                            # Check file names for redistributable indicators
+                            file_name = file.name.lower()
+                            if any(term in file_name for term in ['redist', 'vcredist', 'directx', 'setup', 'install']):
+                                file_types['redist'] += 1
+                    
+                    # Score based on file types
+                    # Game directories usually have more DLLs and game-related files
+                    score += file_types['dll'] * 0.5  # DLLs are good indicators
+                    score += file_types['config'] * 0.3  # Config files are somewhat good indicators
+                    score += file_types['asset'] * 0.4  # Asset files are good indicators
+                    
+                    # Too many EXEs might indicate a utility directory
+                    if file_types['exe'] > 5:
+                        score -= (file_types['exe'] - 5) * 0.2
+                    
+                    # Setup files are negative indicators
+                    score -= file_types['setup'] * 1.0
+                    score -= file_types['redist'] * 1.0
+                    
+                    # Check directory name
+                    dir_name = dir_path.name.lower()
+                    if dir_name in ['bin', 'bin64', 'bin32', 'binaries', 'game', 'main']:
+                        score += 2
+                    elif any(term in dir_name for term in ['redist', 'setup', 'support', 'tools', 'eadm']):
+                        score -= 2
+                    
+                    # Analyze subdirectory names
+                    subdirs = [d for d in dir_path.iterdir() if d.is_dir()]
+                    subdir_names = [d.name.lower() for d in subdirs]
+                    
+                    # Game directories often have these subdirectories
+                    game_subdir_indicators = ['data', 'config', 'save', 'content', 'assets', 'levels']
+                    for indicator in game_subdir_indicators:
+                        if any(indicator in name for name in subdir_names):
+                            score += 0.5
+                    
+                    decky.logger.debug(f"Directory content score for {dir_path}: {score}")
+                    return score
+                    
+                except (PermissionError, OSError) as e:
+                    decky.logger.debug(f"Error analyzing directory {dir_path}: {e}")
+                    return 0
             
             def score_executable(exe_path: Path) -> float:
                 """Score an executable based on how likely it is to be the main game executable"""
@@ -1083,49 +1075,69 @@ class Plugin:
                     
                 decky.logger.debug(f"Scoring executable: {name}")
                 
+                # Name matching with game name
+                name_words = set(re.findall(r'\w+', name.lower()))
+                
+                # Calculate word match score based on intersection
+                matching_words = game_words.intersection(name_words)
+                
+                # If there are matching words, they're worth more if they're a larger percentage of the game name
+                if matching_words:
+                    match_percentage = len(matching_words) / len(game_words) if game_words else 0
+                    word_score = len(matching_words) * 1.5 * (1 + match_percentage)
+                    decky.logger.debug(f"  Name match score: +{word_score:.2f} (words: {matching_words})")
+                    score += word_score
+                
+                # If the exe name is a substring of the game name or vice versa, that's a good indicator
+                if name in game_name or any(word in name for word in game_words):
+                    name_substring_score = 2
+                    decky.logger.debug(f"  Name substring match: +{name_substring_score}")
+                    score += name_substring_score
+                
+                # Check for exact name match (normalized)
+                norm_exe_name = re.sub(r'[^a-z0-9]', '', name)
+                norm_game_name = re.sub(r'[^a-z0-9]', '', game_name)
+                
+                if norm_exe_name == norm_game_name or name == game_name:
+                    exact_match_score = 3
+                    decky.logger.debug(f"  Exact normalized name match: +{exact_match_score}")
+                    score += exact_match_score
+                
                 try:
-                    # File size is a good indicator - main game executables tend to be larger
+                    # File size is still a factor, but less important than name matching
                     size = exe_path.stat().st_size
-                    if size > 1024 * 1024 * 10:  # Larger than 10MB
-                        score += 2
-                        decky.logger.debug(f"  Large size bonus: +2 ({size} bytes)")
-                    elif size > 1024 * 1024:  # Larger than 1MB
-                        score += 1
-                        decky.logger.debug(f"  Medium size bonus: +1 ({size} bytes)")
-                    elif size < 1024 * 500:  # Smaller than 500KB
-                        score -= 1
-                        decky.logger.debug(f"  Small size penalty: -1 ({size} bytes)")
+                    size_mb = size / (1024 * 1024)
+                    
+                    # Logarithmic scoring for size - diminishing returns for very large files
+                    if size_mb > 0:
+                        size_score = min(1.5, math.log10(size_mb) / 2)  # Reduced weight for size
+                        decky.logger.debug(f"  Size score: +{size_score:.2f} ({size_mb:.2f} MB)")
+                        score += size_score
+                    
+                    # Penalize extremely small executables
+                    if size_mb < 0.5:  # Less than 500KB
+                        size_penalty = 1
+                        decky.logger.debug(f"  Small size penalty: -{size_penalty}")
+                        score -= size_penalty
                 except Exception as e:
                     decky.logger.debug(f"  Error checking file size: {e}")
-                    
-                # Word matching with game name is very useful
-                name_words = set(word.strip() for word in re.split(r'[_\-\s]', name))
-                matching_words = game_words.intersection(name_words)
-                word_score = len(matching_words) * 2
                 
-                if word_score > 0:
-                    decky.logger.debug(f"  Name match bonus: +{word_score} (words: {matching_words})")
-                    score += word_score
-                    
-                # Some common executable names get bonus points
-                if name.lower() in ["game", "start", "play", "client", "bin", "win64", "win32", "app"]:
-                    score += 1
-                    decky.logger.debug(f"  Common name bonus: +1 ({name})")
-                    
-                # Bonus for exact name match
-                if name.lower() == game_name.lower() or name.lower().replace(" ", "") == game_name.lower().replace(" ", ""):
-                    score += 3
-                    decky.logger.debug(f"  Exact name match bonus: +3")
-                    
-                # If the name has "launcher" or "setup" in it, reduce score significantly
+                # Bonus for common game executable names
+                if name.lower() in ["game", "start", "play", "client", "app"]:
+                    common_name_score = 0.5
+                    decky.logger.debug(f"  Common name bonus: +{common_name_score} ({name})")
+                    score += common_name_score
+                
+                # If the name contains "launcher" or "setup", reduce score significantly
                 if "launcher" in name.lower() or "setup" in name.lower():
-                    score -= 3
-                    decky.logger.debug(f"  Launcher/setup penalty: -3")
-                    
-                decky.logger.debug(f"  Final score: {score}")
+                    launcher_penalty = 3
+                    decky.logger.debug(f"  Launcher/setup penalty: -{launcher_penalty}")
+                    score -= launcher_penalty
+                
+                decky.logger.debug(f"  Final executable score: {score}")
                 return score
             
-            def find_best_exe(path: Path, max_depth=3, current_depth=0) -> tuple[Path, float]:
+            def find_best_exe_dir(path: Path, max_depth=3, current_depth=0) -> tuple[Path, float]:
                 """Recursively find the best executable directory"""
                 if not path.exists() or not path.is_dir():
                     return None, 0
@@ -1137,24 +1149,36 @@ class Plugin:
                     # First check for executables in this directory
                     exes_in_dir = []
                     for exe in path.glob("*.exe"):
-                        score = score_executable(exe)
-                        if score > 0:
-                            exes_in_dir.append((exe, score))
+                        exe_score = score_executable(exe)
+                        if exe_score > 0:
+                            exes_in_dir.append((exe, exe_score))
                     
-                    # Sort by score (highest first)
+                    # Get directory content score
+                    dir_content_score = analyze_directory_content(path)
+                    
+                    # Sort executables by score (highest first)
                     exes_in_dir.sort(key=lambda x: x[1], reverse=True)
                     
-                    # If we found good executables, use this directory
-                    if exes_in_dir and exes_in_dir[0][1] > best_score:
-                        best_score = exes_in_dir[0][1]
-                        best_exe_dir = path
-                        decky.logger.debug(f"Found good executable in {path}: {exes_in_dir[0][0].name} (score: {best_score})")
+                    # Calculate combined score for this directory
+                    if exes_in_dir:
+                        best_exe_score = exes_in_dir[0][1]
+                        combined_score = best_exe_score + dir_content_score
+                        decky.logger.debug(f"Directory {path} - Best exe: {exes_in_dir[0][0].name} (score: {best_exe_score:.2f}), Dir content: {dir_content_score:.2f}, Combined: {combined_score:.2f}")
+                        
+                        if combined_score > best_score:
+                            best_score = combined_score
+                            best_exe_dir = path
+                    else:
+                        # If no executables, just use the directory content score
+                        if dir_content_score > best_score:
+                            best_score = dir_content_score
+                            best_exe_dir = path
                     
-                    # If we didn't find a good match and have depth remaining, check subdirectories
-                    if (best_score < 3 or current_depth == 0) and current_depth < max_depth:
+                    # If we haven't found a good match and have depth remaining, check subdirectories
+                    if (best_score < 4 or current_depth == 0) and current_depth < max_depth:
                         for subdir in path.iterdir():
                             if subdir.is_dir():
-                                sub_exe_dir, sub_score = find_best_exe(subdir, max_depth, current_depth + 1)
+                                sub_exe_dir, sub_score = find_best_exe_dir(subdir, max_depth, current_depth + 1)
                                 if sub_score > best_score:
                                     best_score = sub_score
                                     best_exe_dir = sub_exe_dir
@@ -1163,16 +1187,37 @@ class Plugin:
                     decky.logger.debug(f"Error accessing directory {path}: {e}")
                 
                 return best_exe_dir, best_score
-            
+                
             # Find the best executable directory
-            best_dir, score = find_best_exe(game_path)
+            best_dir, score = find_best_exe_dir(path)
+            
+            return best_dir, score
+            
+        except Exception as e:
+            decky.logger.error(f"Error in _find_game_executable_directory: {str(e)}")
+            return path, 0
+
+    def _find_heroic_game_executable_directory(self, game_path: str) -> str:
+        """Find the directory containing the game's main executable using smart detection"""
+        try:
+            game_path = Path(game_path)
+            if not game_path.exists() or not game_path.is_dir():
+                return None
+                
+            # Get name of the game directory for smarter exe matching
+            game_name = game_path.name.lower().replace("_", " ").replace("-", " ")
+            
+            decky.logger.info(f"Finding executable directory for Heroic game: {game_name}")
+            
+            # Use the unified game executable detection function
+            best_dir, score = self._find_game_executable_directory(game_path, game_name)
             
             if best_dir and score > 0:
-                decky.logger.info(f"Found game executable directory: {best_dir} (score: {score})")
+                decky.logger.info(f"Found game executable directory: {best_dir} (score: {score:.2f})")
                 return str(best_dir)
             
             # If we couldn't find anything, check some common subdirectories
-            common_dirs = ["bin", "binaries", "game", "win64", "win32", "x64", "x86"]
+            common_dirs = ["bin", "bin32", "bin64", "binaries", "game", "win64", "win32", "x64", "x86"]
             for common in common_dirs:
                 test_path = game_path / common
                 if test_path.exists() and test_path.is_dir():
@@ -1188,6 +1233,57 @@ class Plugin:
         except Exception as e:
             decky.logger.error(f"Error finding game executable directory: {str(e)}")
             return None
+
+    def _find_game_path(self, appid: str) -> str:
+        steam_root = Path(decky.HOME) / ".steam" / "steam"
+        library_file = steam_root / "steamapps" / "libraryfolders.vdf"
+
+        if not library_file.exists():
+            raise ValueError(f"Steam library file not found: {library_file}")
+
+        library_paths = []
+        with open(library_file, "r", encoding="utf-8") as file:
+            for line in file:
+                if '"path"' in line:
+                    path = line.split('"path"')[1].strip().strip('"').replace("\\\\", "/")
+                    library_paths.append(path)
+
+        for library_path in library_paths:
+            manifest_path = Path(library_path) / "steamapps" / f"appmanifest_{appid}.acf"
+            if manifest_path.exists():
+                with open(manifest_path, "r", encoding="utf-8") as manifest:
+                    for line in manifest:
+                        if '"installdir"' in line:
+                            install_dir = line.split('"installdir"')[1].strip().strip('"')
+                            base_path = Path(library_path) / "steamapps" / "common" / install_dir
+                            
+                            # Get name of the game directory for smarter exe matching
+                            game_name = install_dir.lower().replace("_", " ").replace("-", " ")
+                            
+                            decky.logger.info(f"Finding executable directory for Steam game: {game_name}")
+                            
+                            # Use the unified game executable detection function
+                            best_dir, score = self._find_game_executable_directory(base_path, game_name)
+                            
+                            if best_dir and score > 0:
+                                decky.logger.info(f"Found game executable directory: {best_dir} (score: {score:.2f})")
+                                return str(best_dir)
+                            
+                            # If we couldn't find anything, check some common subdirectories
+                            common_dirs = ["bin", "bin32", "bin64", "binaries", "game", "win64", "win32", "x64", "x86"]
+                            for common in common_dirs:
+                                test_path = base_path / common
+                                if test_path.exists() and test_path.is_dir():
+                                    exes = list(test_path.glob("*.exe"))
+                                    if exes:
+                                        decky.logger.info(f"Using common executable directory: {test_path}")
+                                        return str(test_path)
+                            
+                            # If we still didn't find anything, just use the original path
+                            decky.logger.info(f"No suitable executable directory found, using base path: {base_path}")
+                            return str(base_path)
+
+        raise ValueError(f"Could not find installation directory for AppID: {appid}")
 
     async def uninstall_reshade_for_heroic_game(self, game_path: str) -> dict:
         """Uninstall ReShade from a Heroic game"""
