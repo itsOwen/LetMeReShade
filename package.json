@@ -52,22 +52,22 @@
   "remote_binary": [
     {
       "name": "reshade_latest.exe",
-      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/reshade_latest.exe",
+      "url": "https://github.com/itsOwen/LetMeReShade_Binaries/releases/download/ReShade_Version_6.5.1/reshade_latest.exe",
       "sha256hash": "c384e89427865e119db4daf18c2c225b951a4cd07dbff92b65caf68c2a95ace0"
     },
     {
       "name": "reshade_latest_addon.exe",
-      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/reshade_latest_addon.exe",
+      "url": "https://github.com/itsOwen/LetMeReShade_Binaries/releases/download/ReShade_Version_6.5.1/reshade_latest_addon.exe",
       "sha256hash": "3be164186103dcf126af3d75d8efdf850c4ed9f88919505c16a52e6d0ef135a7"
     },
     {
       "name": "reshade_last.exe",
-      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/reshade_last.exe",
+      "url": "https://github.com/itsOwen/LetMeReShade_Binaries/releases/download/ReShade_Version_6.5.1/reshade_last.exe",
       "sha256hash": "503a2cef5a3a24400759d9559b36b9100574c09525d8ef1dba7b91b001ff1845"
     },
     {
       "name": "reshade_last_addon.exe",
-      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/reshade_last_addon.exe",
+      "url": "https://github.com/itsOwen/LetMeReShade_Binaries/releases/download/ReShade_Version_6.5.1/reshade_last_addon.exe",
       "sha256hash": "9ac89947607ebe01724f4f7a71788023fa458d12beed0435c8362190af1e5a6b"
     },
     {
