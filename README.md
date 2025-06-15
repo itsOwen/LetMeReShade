@@ -22,6 +22,7 @@
 - 🌐 Global preset management with custom shader support
 - 🎮 In-game overlay accessible via **HOME** key
 - ⚙️ Steam Deck–optimized configurations
+- 🖥️ Supports AUTO HDR for Oled Screens
 - 🎪 Full support for Heroic Games (Epic Games, GOG, Amazon Games)
 
 ## 📋 Prerequisites
@@ -242,6 +243,7 @@ See the [LICENSE](LICENSE) file for complete terms and conditions.
 - **xXJSONDeruloXx** - Foundation framework from *Decky Framegen* plugin
 - **kevinlekiller** - *reshade-steam-proton* repository integration
 - **DadSchoorse** - VkBasalt repository and Vulkan expertise
+- **Gizzburt** - Special thanks to my buddy Gizz for helping me add AutoHDR support and also for his [Detailed Guide](https://www.reddit.com/r/SteamDeck/comments/1l9h2uv/steam_deck_oled_autohdr_and_you_a_guide/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_buttonBut)
 
 ### 🌟 **Community Support**
 Special thanks to the Steam Deck homebrew community for continuous feedback and testing.
