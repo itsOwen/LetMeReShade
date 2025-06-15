@@ -1,6 +1,6 @@
 {
   "name": "letmereshade-decky",
-  "version": "1.2",
+  "version": "1.3",
   "description": "ReShade plugin for Steam Deck - Enhanced version with improved shader and game management",
   "type": "module",
   "scripts": {
@@ -124,6 +124,16 @@
       "name": "retroarch_shaders.tar.gz",
       "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/retroarch_shaders.tar.gz",
       "sha256hash": "25d8c03326f7ff7a0baf0e081c3a2ac8b1e8f12fb14914a2e1225d8df024bbb5"
+    },
+    {
+      "name": "autohdr_addon.tar.gz",
+      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/autohdr_addon.tar.gz",
+      "sha256hash": "6389cf9be76e6c0358adea593c3391e7cfac0e0ce229cd1ed6683b3689c9f690"
+    },
+    {
+      "name": "advanced_autohdr_effect.tar.gz",
+      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/advanced_autohdr_effect.tar.gz",
+      "sha256hash": "97a0594baaa0ac780a15f0cbeb5535fe0bea269015084132a2510966fc25fc5c"
     }
   ]
 }

@@ -18,7 +18,8 @@ class Plugin:
             'DELETE_RESHADE_FILES': '0',
             'FORCE_RESHADE_UPDATE_CHECK': '0',
             'RESHADE_ADDON_SUPPORT': '0',
-            'RESHADE_VERSION': 'latest'  
+            'RESHADE_VERSION': 'latest',
+            'AUTOHDR_ENABLED': '0'  # NEW: AutoHDR support
         }
         # Separate base paths for ReShade and VkBasalt
         self.main_path = os.path.join(self.environment['XDG_DATA_HOME'], 'reshade')
@@ -58,6 +59,112 @@ class Plugin:
     async def _unload(self):
         decky.logger.info("ReShade plugin unloaded")
 
+    async def detect_steam_deck_model(self) -> dict:
+        """Detect Steam Deck model (OLED vs LCD) using board name"""
+        try:
+            decky.logger.info("Detecting Steam Deck model...")
+            
+            # First check if we can read system info at all
+            is_steam_deck = False
+            product_name = ""
+            
+            try:
+                with open('/sys/devices/virtual/dmi/id/product_name', 'r') as f:
+                    product_name = f.read().strip()
+                decky.logger.info(f"DMI Product name: '{product_name}'")
+                
+                # More flexible Steam Deck detection
+                if any(term in product_name.lower() for term in ["steam deck", "steamdeck", "jupiter", "galileo"]):
+                    is_steam_deck = True
+                    decky.logger.info("Confirmed this is a Steam Deck")
+                else:
+                    decky.logger.warning(f"Product name '{product_name}' doesn't indicate Steam Deck")
+            except (FileNotFoundError, PermissionError) as e:
+                decky.logger.warning(f"Could not read DMI product name: {e}")
+            
+            # If we can't confirm it's a Steam Deck through product name, 
+            # let's assume it is and try board detection anyway
+            if not is_steam_deck:
+                decky.logger.info("Could not confirm Steam Deck via product name, proceeding with board detection")
+            
+            # Check board name - most reliable method for Steam Deck OLED vs LCD
+            board_name = ""
+            try:
+                with open('/sys/devices/virtual/dmi/id/board_name', 'r') as f:
+                    board_name = f.read().strip()
+                decky.logger.info(f"DMI Board name: '{board_name}'")
+                
+                # Check for OLED (Galileo)
+                if "Galileo" in board_name:
+                    decky.logger.info("Detected Steam Deck OLED (Galileo)")
+                    return {
+                        "status": "success",
+                        "model": "OLED",
+                        "is_oled": True
+                    }
+                # Check for LCD (Jupiter)
+                elif "Jupiter" in board_name:
+                    decky.logger.info("Detected Steam Deck LCD (Jupiter)")
+                    return {
+                        "status": "success",
+                        "model": "LCD",
+                        "is_oled": False
+                    }
+                else:
+                    decky.logger.warning(f"Unknown board name: '{board_name}'")
+                    
+                    # If we confirmed it's a Steam Deck but unknown board, default to LCD
+                    if is_steam_deck:
+                        decky.logger.info("Confirmed Steam Deck but unknown board, defaulting to LCD")
+                        return {
+                            "status": "success",
+                            "model": "LCD",
+                            "is_oled": False
+                        }
+                    
+            except (FileNotFoundError, PermissionError) as e:
+                decky.logger.warning(f"Could not read DMI board name: {e}")
+            
+            # Additional fallback checks for Steam Deck detection
+            try:
+                # Check system manufacturer
+                with open('/sys/devices/virtual/dmi/id/sys_vendor', 'r') as f:
+                    vendor = f.read().strip()
+                decky.logger.info(f"System vendor: '{vendor}'")
+                
+                if "Valve" in vendor:
+                    is_steam_deck = True
+                    decky.logger.info("Confirmed Steam Deck via vendor")
+            except (FileNotFoundError, PermissionError) as e:
+                decky.logger.debug(f"Could not read sys_vendor: {e}")
+            
+            # Final decision logic
+            if is_steam_deck:
+                # We know it's a Steam Deck but couldn't determine the model
+                decky.logger.info("Confirmed Steam Deck, but model detection failed - defaulting to LCD")
+                return {
+                    "status": "success",
+                    "model": "LCD", 
+                    "is_oled": False
+                }
+            else:
+                # We couldn't confirm this is a Steam Deck
+                decky.logger.info("Could not confirm this is a Steam Deck")
+                return {
+                    "status": "success",
+                    "model": "Not Steam Deck",
+                    "is_oled": False
+                }
+                
+        except Exception as e:
+            decky.logger.error(f"Error detecting Steam Deck model: {str(e)}")
+            return {
+                "status": "error", 
+                "message": str(e),
+                "model": "Unknown",
+                "is_oled": False
+            }
+
     async def check_reshade_path(self) -> dict:
         path = Path(os.path.expanduser("~/.local/share/reshade"))
         marker_file = path / ".installed"
@@ -89,7 +196,7 @@ class Plugin:
         marker_file = Path(self.vkbasalt_base_path) / ".installed"
         return {"exists": marker_file.exists()}
 
-    async def run_install_reshade(self, with_addon: bool = False, version: str = "latest") -> dict:
+    async def run_install_reshade(self, with_addon: bool = False, version: str = "latest", with_autohdr: bool = False) -> dict:
         try:
             assets_dir = self._get_assets_dir()
             script_path = assets_dir / "reshade-install.sh"
@@ -101,9 +208,10 @@ class Plugin:
             # Create a new environment dictionary for this installation
             install_env = self.environment.copy()
             
-            # Explicitly set RESHADE_ADDON_SUPPORT and RESHADE_VERSION based on parameters
+            # Explicitly set RESHADE_ADDON_SUPPORT, RESHADE_VERSION, and AUTOHDR_ENABLED based on parameters
             install_env['RESHADE_ADDON_SUPPORT'] = '1' if with_addon else '0'
             install_env['RESHADE_VERSION'] = version
+            install_env['AUTOHDR_ENABLED'] = '1' if with_autohdr else '0'  # NEW: Set AutoHDR flag
             
             # Add other necessary environment variables
             install_env.update({
@@ -111,7 +219,13 @@ class Plugin:
                 'XDG_DATA_HOME': os.path.expandvars('$HOME/.local/share')
             })
 
-            decky.logger.info(f"Installing ReShade {version} with addon support: {with_addon}")
+            install_description = f"Installing ReShade {version}"
+            if with_addon:
+                install_description += " with addon support"
+            if with_autohdr:
+                install_description += " and AutoHDR components"
+            
+            decky.logger.info(install_description)
             decky.logger.info(f"Environment: {install_env}")
 
             process = subprocess.run(
@@ -146,7 +260,13 @@ class Plugin:
 
             marker_file.touch()
 
-            version_display = f"ReShade {version.title()}" + (' (with Addon Support)' if with_addon else '')
+            # Create success message
+            version_display = f"ReShade {version.title()}"
+            if with_addon:
+                version_display += ' (with Addon Support)'
+            if with_autohdr:
+                version_display += ' and AutoHDR components'
+            
             return {"status": "success", "output": f"{version_display} installed successfully!"}
         except Exception as e:
             decky.logger.error(f"Install error: {str(e)}")
@@ -1110,6 +1230,7 @@ class Plugin:
                     
                     # Logarithmic scoring for size - diminishing returns for very large files
                     if size_mb > 0:
+                        import math
                         size_score = min(1.5, math.log10(size_mb) / 2)  # Reduced weight for size
                         decky.logger.debug(f"  Size score: +{size_score:.2f} ({size_mb:.2f} MB)")
                         score += size_score
