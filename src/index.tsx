@@ -33,9 +33,17 @@ interface VersionOption {
   value: string;
 }
 
-const runInstallReShade = callable<[boolean, string], InstallResult>("run_install_reshade");
+interface DeckModelResponse {
+  status: string;
+  model: string;
+  is_oled: boolean;
+  message?: string;
+}
+
+const runInstallReShade = callable<[boolean, string, boolean], InstallResult>("run_install_reshade");
 const runUninstallReShade = callable<[], InstallResult>("run_uninstall_reshade");
 const checkReShadePath = callable<[], PathCheckResponse>("check_reshade_path");
+const detectSteamDeckModel = callable<[], DeckModelResponse>("detect_steam_deck_model");
 const logError = callable<[string], void>("log_error");
 
 // VkBasalt callables
@@ -50,11 +58,14 @@ function ReShadeInstallerSection() {
   const [uninstallResult, setUninstallResult] = useState<InstallResult | null>(null);
   const [pathExists, setPathExists] = useState<boolean | null>(null);
   const [addonEnabled, setAddonEnabled] = useState<boolean>(false);
+  const [autoHdrEnabled, setAutoHdrEnabled] = useState<boolean>(false);
   const [selectedVersion, setSelectedVersion] = useState<VersionOption | null>(null);
   const [currentVersionInfo, setCurrentVersionInfo] = useState<{ version: string; addon: boolean } | null>(null);
   const [initialLoad, setInitialLoad] = useState<boolean>(true);
   const [showingAddonDialog, setShowingAddonDialog] = useState<boolean>(false);
   const [pendingAddonState, setPendingAddonState] = useState<boolean>(false);
+  const [deckModel, setDeckModel] = useState<DeckModelResponse | null>(null);
+  const [modelLoading, setModelLoading] = useState<boolean>(true);
 
   const versionOptions: VersionOption[] = [
     { label: 'ReShade Latest', value: 'latest' },
@@ -66,7 +77,7 @@ function ReShadeInstallerSection() {
       try {
         const result = await checkReShadePath();
         setPathExists(result.exists);
-        
+
         if (result.version_info) {
           setCurrentVersionInfo(result.version_info);
         }
@@ -97,6 +108,21 @@ function ReShadeInstallerSection() {
   }, [initialLoad, selectedVersion]);
 
   useEffect(() => {
+    const detectDeckModel = async () => {
+      try {
+        setModelLoading(true);
+        const result = await detectSteamDeckModel();
+        setDeckModel(result);
+      } catch (e) {
+        await logError(`Steam Deck model detection error: ${String(e)}`);
+      } finally {
+        setModelLoading(false);
+      }
+    };
+    detectDeckModel();
+  }, []);
+
+  useEffect(() => {
     if (installResult) {
       const timer = setTimeout(() => setInstallResult(null), 5000);
       return () => clearTimeout(timer);
@@ -120,7 +146,7 @@ function ReShadeInstallerSection() {
 
     try {
       setInstalling(true);
-      const result = await runInstallReShade(addonEnabled, selectedVersion.value);
+      const result = await runInstallReShade(addonEnabled, selectedVersion.value, autoHdrEnabled);
       setInstallResult(result);
     } catch (e) {
       setInstallResult({ status: "error", message: String(e) });
@@ -136,6 +162,7 @@ function ReShadeInstallerSection() {
       const result = await runUninstallReShade();
       setUninstallResult(result);
       setAddonEnabled(false);
+      setAutoHdrEnabled(false);
     } catch (e) {
       setUninstallResult({ status: "error", message: String(e) });
       await logError(`Uninstall error: ${String(e)}`);
@@ -169,12 +196,47 @@ function ReShadeInstallerSection() {
       );
     } else {
       setAddonEnabled(false);
+      // Disable AutoHDR if addon support is disabled
+      setAutoHdrEnabled(false);
+    }
+  };
+
+  const handleAutoHdrToggle = () => {
+    if (!autoHdrEnabled) {
+      // Create warning message based on detected model
+      let warningTitle = "Enable AutoHDR Components?";
+      let warningMessage = "AutoHDR components will be installed with ReShade. ";
+
+      if (deckModel) {
+        if (!deckModel.is_oled) {
+          warningTitle = "LCD Model Warning";
+          warningMessage += `⚠️ You have a Steam Deck ${deckModel.model}. AutoHDR is optimized for OLED displays and may not work properly or cause visual issues on LCD models. `;
+        } else {
+          warningMessage += `✅ Detected Steam Deck ${deckModel.model} - AutoHDR is optimized for your display. `;
+        }
+      } else if (!modelLoading) {
+        warningMessage += "⚠️ Could not detect Steam Deck model. AutoHDR is optimized for OLED displays. ";
+      }
+
+      warningMessage += "AutoHDR only works with DirectX 10/11/12 games. Continue?";
+
+      showModal(
+        <ConfirmModal
+          strTitle={warningTitle}
+          strDescription={warningMessage}
+          strOKButtonText="Enable AutoHDR"
+          strCancelButtonText="Cancel"
+          onOK={() => setAutoHdrEnabled(true)}
+        />
+      );
+    } else {
+      setAutoHdrEnabled(false);
     }
   };
 
   const getInstallButtonText = () => {
     if (installing) return "Installing...";
-    
+
     let text = "🔧 Install";
     if (selectedVersion) {
       text += ` ${selectedVersion.label}`;
@@ -182,16 +244,19 @@ function ReShadeInstallerSection() {
     if (addonEnabled) {
       text += " with Addon Support";
     }
+    if (autoHdrEnabled) {
+      text += " + AutoHDR";
+    }
     return text;
   };
 
   const getVersionMismatchWarning = () => {
     if (!pathExists || !currentVersionInfo || !selectedVersion) return null;
-    
+
     const currentVersion = currentVersionInfo.version;
     const selectedVersionValue = selectedVersion.value;
     const currentAddon = currentVersionInfo.addon;
-    
+
     if (currentVersion !== selectedVersionValue || currentAddon !== addonEnabled) {
       return (
         <PanelSectionRow>
@@ -207,7 +272,61 @@ function ReShadeInstallerSection() {
         </PanelSectionRow>
       );
     }
-    
+
+    return null;
+  };
+
+  const renderDeckModelInfo = () => {
+    if (modelLoading) return null;
+
+    if (deckModel && deckModel.status === "success") {
+      // Handle the "Not Steam Deck" case properly
+      if (deckModel.model === "Not Steam Deck") {
+        return (
+          <PanelSectionRow>
+            <div style={{
+              fontSize: '0.9em',
+              color: "gray",
+              marginBottom: '8px'
+            }}>
+              🔍 Non Steam Deck Device detected
+            </div>
+          </PanelSectionRow>
+        );
+      }
+
+      // Handle normal Steam Deck cases
+      const isOptimal = deckModel.is_oled;
+      const statusColor = isOptimal ? "green" : "orange";
+      const statusIcon = isOptimal ? "🟢" : "🟡";
+
+      // Construct proper display text
+      let displayText = "";
+      if (deckModel.model === "OLED" || deckModel.model === "LCD") {
+        displayText = `${statusIcon} Steam Deck ${deckModel.model} detected`;
+      } else {
+        // Fallback for any other model names
+        displayText = `${statusIcon} ${deckModel.model} detected`;
+      }
+
+      return (
+        <PanelSectionRow>
+          <div style={{
+            fontSize: '0.9em',
+            color: statusColor,
+            marginBottom: '8px'
+          }}>
+            {displayText}
+            {!isOptimal && deckModel.model !== "Not Steam Deck" && (
+              <div style={{ fontSize: '0.8em', opacity: 0.8, marginTop: '2px' }}>
+                AutoHDR optimized for OLED
+              </div>
+            )}
+          </div>
+        </PanelSectionRow>
+      );
+    }
+
     return null;
   };
 
@@ -232,6 +351,8 @@ function ReShadeInstallerSection() {
           </div>
         </PanelSectionRow>
       )}
+
+      {addonEnabled && renderDeckModelInfo()}
 
       {pathExists === false && (
         <>
@@ -260,10 +381,20 @@ function ReShadeInstallerSection() {
               disabled={showingAddonDialog}
             />
           </PanelSectionRow>
+          {addonEnabled && (
+            <PanelSectionRow>
+              <ToggleField
+                label="Include AutoHDR Components"
+                description="For Steam Deck OLED HDR gaming (DX10/11/12 only)"
+                checked={autoHdrEnabled}
+                onChange={handleAutoHdrToggle}
+              />
+            </PanelSectionRow>
+          )}
           <PanelSectionRow>
-            <ButtonItem 
-              layout="below" 
-              onClick={handleInstallClick} 
+            <ButtonItem
+              layout="below"
+              onClick={handleInstallClick}
               disabled={installing || !selectedVersion}
             >
               {getInstallButtonText()}
@@ -300,10 +431,20 @@ function ReShadeInstallerSection() {
               disabled={showingAddonDialog}
             />
           </PanelSectionRow>
+          {addonEnabled && (
+            <PanelSectionRow>
+              <ToggleField
+                label="Include AutoHDR Components"
+                description="For Steam Deck OLED HDR gaming (DX10/11/12 only)"
+                checked={autoHdrEnabled}
+                onChange={handleAutoHdrToggle}
+              />
+            </PanelSectionRow>
+          )}
           <PanelSectionRow>
-            <ButtonItem 
-              layout="below" 
-              onClick={handleInstallClick} 
+            <ButtonItem
+              layout="below"
+              onClick={handleInstallClick}
               disabled={installing || !selectedVersion}
             >
               {getInstallButtonText()}
@@ -352,6 +493,11 @@ function ReShadeInstallerSection() {
       <PanelSectionRow>
         <div>
           Press HOME key in-game to access the ReShade overlay.
+          {addonEnabled && autoHdrEnabled && (
+            <div style={{ fontSize: '0.9em', marginTop: '4px', opacity: 0.8 }}>
+              AutoHDR works with DirectX 10/11/12 games only.
+            </div>
+          )}
         </div>
       </PanelSectionRow>
     </PanelSection>

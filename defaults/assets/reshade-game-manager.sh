@@ -110,6 +110,34 @@ setup_game_reshade() {
         return 1
     fi
     
+    # NEW: Copy AutoHDR addon files if available (addons can't be symlinked)
+    if [ -f "$RESHADE_PATH/latest/addon_version" ]; then
+        log_message "ReShade has addon support, checking for AutoHDR components"
+        
+        # Copy AutoHDR addon files if they exist
+        if [ -f "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon$arch" ]; then
+            log_message "Copying AutoHDR addon files to game directory"
+            cp "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon$arch" "$game_path/" || {
+                log_message "Warning: Failed to copy AutoHDR addon file"
+            }
+            
+            # Also copy the other architecture if present (some games may need both)
+            if [[ "$arch" == "64" && -f "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon32" ]]; then
+                cp "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon32" "$game_path/" || {
+                    log_message "Warning: Failed to copy AutoHDR.addon32"
+                }
+            elif [[ "$arch" == "32" && -f "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon64" ]]; then
+                cp "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon64" "$game_path/" || {
+                    log_message "Warning: Failed to copy AutoHDR.addon64"
+                }
+            fi
+        else
+            log_message "AutoHDR addon files not found in storage directory"
+        fi
+    else
+        log_message "ReShade addon support not available, skipping AutoHDR addon installation"
+    fi
+    
     # Link shader directory
     if [ -d "$MAIN_PATH/ReShade_shaders" ]; then
         log_message "Linking shader directory"
@@ -146,6 +174,17 @@ remove_game_reshade() {
             rm -fv "$game_path/${override}.dll"
         fi
     done
+    
+    # NEW: Remove AutoHDR addon files
+    if [ -f "$game_path/AutoHDR.addon32" ]; then
+        log_message "Removing AutoHDR.addon32"
+        rm -fv "$game_path/AutoHDR.addon32"
+    fi
+    
+    if [ -f "$game_path/AutoHDR.addon64" ]; then
+        log_message "Removing AutoHDR.addon64"
+        rm -fv "$game_path/AutoHDR.addon64"
+    fi
     
     # Remove other ReShade files
     local reshade_files="ReShade.ini ReShade32.json ReShade64.json d3dcompiler_47.dll ReShade_shaders ReShadePreset.ini"
@@ -252,6 +291,9 @@ main() {
                 # Update the WINEDLLOVERRIDES based on detected API
                 local override_cmd="WINEDLLOVERRIDES=\"d3dcompiler_47=n;${dll_override}=n,b\" %command%"
                 echo "Successfully installed ReShade"
+                if [ -f "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon$arch" ]; then
+                    echo "AutoHDR components included (requires DirectX 10/11/12 games)"
+                fi
                 echo "Use this launch option: $override_cmd"
                 echo "Press INSERT key in-game to open ReShade interface"
                 return 0

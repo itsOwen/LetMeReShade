@@ -11,8 +11,9 @@ UPDATE_RESHADE=${UPDATE_RESHADE:-1}
 MERGE_SHADERS=${MERGE_SHADERS:-1}
 VULKAN_SUPPORT=${VULKAN_SUPPORT:-0}
 GLOBAL_INI=${GLOBAL_INI:-"ReShade.ini"}
-RESHADE_VERSION=${RESHADE_VERSION:-"latest"}  # New: version selection
+RESHADE_VERSION=${RESHADE_VERSION:-"latest"}
 RESHADE_ADDON_SUPPORT=${RESHADE_ADDON_SUPPORT:-0}
+AUTOHDR_ENABLED=${AUTOHDR_ENABLED:-0}
 
 # Get the correct path to the bin directory - check both possible locations
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
@@ -50,6 +51,8 @@ setup_directories() {
     mkdir -p "$RESHADE_PATH"
     mkdir -p "$MAIN_PATH/ReShade_shaders"
     mkdir -p "$MAIN_PATH/External_shaders"
+    # NEW: Create AutoHDR addon storage directory
+    mkdir -p "$MAIN_PATH/AutoHDR_addons"
 }
 
 # Creates a temporary directory for downloads
@@ -176,7 +179,55 @@ setup_shaders() {
                 [[ -f $file ]] && ln -sf "$file" "$MAIN_PATH/ReShade_shaders/Merged/Shaders/"
             done
         fi
+        
+        # NEW: Copy any loose .fx and .fxh files from main ReShade_shaders directory to Merged
+        log_message "Copying loose shader files to merged directory"
+        for file in "$MAIN_PATH/ReShade_shaders"/*.fx "$MAIN_PATH/ReShade_shaders"/*.fxh; do
+            [[ -f "$file" ]] && cp "$file" "$MAIN_PATH/ReShade_shaders/Merged/Shaders/"
+        done
     fi
+}
+
+setup_autohdr() {
+    if [[ $AUTOHDR_ENABLED != 1 ]]; then
+        return
+    fi
+    
+    log_message "Setting up AutoHDR components..."
+    
+    # Extract AutoHDR addon files to addon storage directory (NOT to ReShade installation)
+    if [[ -f "$BIN_PATH/autohdr_addon.tar.gz" ]]; then
+        log_message "Extracting AutoHDR addon files to storage directory"
+        tar -xzf "$BIN_PATH/autohdr_addon.tar.gz" -C "$MAIN_PATH/AutoHDR_addons/"
+    else
+        log_message "Warning: autohdr_addon.tar.gz not found in bin directory"
+    fi
+    
+    # Extract AdvancedAutoHDR effect files
+    if [[ -f "$BIN_PATH/advanced_autohdr_effect.tar.gz" ]]; then
+        log_message "Extracting AdvancedAutoHDR effect files"
+        # Create temporary directory for extraction
+        temp_autohdr_dir=$(mktemp -d)
+        tar -xzf "$BIN_PATH/advanced_autohdr_effect.tar.gz" -C "$temp_autohdr_dir"
+        
+        # Copy all .fx and .fxh files to the main shader directory
+        find "$temp_autohdr_dir" -name "*.fx" -exec cp {} "$MAIN_PATH/ReShade_shaders/" \;
+        find "$temp_autohdr_dir" -name "*.fxh" -exec cp {} "$MAIN_PATH/ReShade_shaders/" \;
+        
+        # If we're using merged shaders, also copy to merged directory
+        if [[ $MERGE_SHADERS == 1 ]]; then
+            log_message "Copying AutoHDR effects to merged shaders directory"
+            find "$temp_autohdr_dir" -name "*.fx" -exec cp {} "$MAIN_PATH/ReShade_shaders/Merged/Shaders/" \;
+            find "$temp_autohdr_dir" -name "*.fxh" -exec cp {} "$MAIN_PATH/ReShade_shaders/Merged/Shaders/" \;
+        fi
+        
+        # Clean up temporary directory
+        rm -rf "$temp_autohdr_dir"
+    else
+        log_message "Warning: advanced_autohdr_effect.tar.gz not found in bin directory"
+    fi
+    
+    log_message "AutoHDR components setup completed"
 }
 
 setup_reshade() {
@@ -233,7 +284,7 @@ setup_reshade() {
         exit 1
     }
     
-    local target_dir="$RESHADE_PATH/$RESHADE_VERSION$version_suffix"
+    target_dir="$RESHADE_PATH/$RESHADE_VERSION$version_suffix"
     rm -rf "$target_dir"
     mkdir -p "$target_dir"
     mv ./* "$target_dir"
@@ -247,6 +298,9 @@ setup_reshade() {
     if [[ $addon_support -eq 1 ]]; then
         touch "$target_dir/addon_version"
     fi
+    
+    # Set up AutoHDR components if enabled (must be after ReShade extraction)
+    setup_autohdr
 }
 
 setup_reshade_ini() {
@@ -286,6 +340,7 @@ main() {
     log_message "Plugin root: $PLUGIN_ROOT"
     log_message "Bin path: $BIN_PATH"
     log_message "ReShade version: $RESHADE_VERSION"
+    log_message "AutoHDR enabled: $AUTOHDR_ENABLED"
     
     check_dependencies
     setup_directories
@@ -318,6 +373,11 @@ main() {
         echo "Installed with addon support"
     else
         echo "Installed without addon support"
+    fi
+    if [[ $AUTOHDR_ENABLED -eq 1 ]]; then
+        echo "AutoHDR components installed for Steam Deck OLED"
+        echo "AutoHDR addon files stored at: $MAIN_PATH/AutoHDR_addons"
+        echo "Note: AutoHDR only works with DirectX 10/11/12 games"
     fi
     echo "Version: $RESHADE_VERSION"
 }
