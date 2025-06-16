@@ -19,7 +19,7 @@ class Plugin:
             'FORCE_RESHADE_UPDATE_CHECK': '0',
             'RESHADE_ADDON_SUPPORT': '0',
             'RESHADE_VERSION': 'latest',
-            'AUTOHDR_ENABLED': '0'  # NEW: AutoHDR support
+            'AUTOHDR_ENABLED': '0'
         }
         # Separate base paths for ReShade and VkBasalt
         self.main_path = os.path.join(self.environment['XDG_DATA_HOME'], 'reshade')
@@ -58,6 +58,99 @@ class Plugin:
 
     async def _unload(self):
         decky.logger.info("ReShade plugin unloaded")
+
+    async def get_available_shaders(self) -> dict:
+        """Get list of available shader packages for selection"""
+        try:
+            # Get the bin directory path
+            plugin_dir = Path(decky.DECKY_PLUGIN_DIR)
+            
+            # Check both possible locations for bin directory
+            defaults_bin = plugin_dir / "defaults" / "bin"
+            assets_bin = plugin_dir / "bin"
+            
+            bin_path = None
+            if defaults_bin.exists():
+                bin_path = defaults_bin
+            elif assets_bin.exists():
+                bin_path = assets_bin
+            else:
+                return {"status": "error", "message": "Bin directory not found"}
+
+            # Define available shader packages with descriptions
+            shader_packages = [
+                {
+                    "id": "reshade_shaders",
+                    "name": "ReShade Community Shaders",
+                    "description": "Official ReShade community shader collection",
+                    "file": "reshade_shaders.tar.gz",
+                    "size_mb": "~15MB",
+                    "enabled": True
+                },
+                {
+                    "id": "sweetfx_shaders", 
+                    "name": "SweetFX Shaders",
+                    "description": "Popular SweetFX shader effects collection",
+                    "file": "sweetfx_shaders.tar.gz",
+                    "size_mb": "~8MB",
+                    "enabled": True
+                },
+                {
+                    "id": "martymc_shaders",
+                    "name": "MartyMcFly's RT Shaders",
+                    "description": "High-quality ray tracing and lighting effects",
+                    "file": "martymc_shaders.tar.gz", 
+                    "size_mb": "~12MB",
+                    "enabled": True
+                },
+                {
+                    "id": "astrayfx_shaders",
+                    "name": "AstrayFX Shaders",
+                    "description": "Performance-focused shader collection",
+                    "file": "astrayfx_shaders.tar.gz",
+                    "size_mb": "~5MB", 
+                    "enabled": True
+                },
+                {
+                    "id": "prod80_shaders",
+                    "name": "Prod80's Shaders",
+                    "description": "Professional color grading and enhancement shaders",
+                    "file": "prod80_shaders.tar.gz",
+                    "size_mb": "~6MB",
+                    "enabled": True
+                },
+                {
+                    "id": "retroarch_shaders",
+                    "name": "RetroArch Shaders",
+                    "description": "Retro gaming and CRT emulation effects",
+                    "file": "retroarch_shaders.tar.gz",
+                    "size_mb": "~10MB",
+                    "enabled": True
+                }
+            ]
+
+            # Check which shader packages actually exist
+            available_shaders = []
+            for shader in shader_packages:
+                shader_file = bin_path / shader["file"]
+                if shader_file.exists():
+                    # Get actual file size
+                    file_size = shader_file.stat().st_size
+                    size_mb = round(file_size / (1024 * 1024), 1)
+                    shader["size_mb"] = f"{size_mb}MB"
+                    available_shaders.append(shader)
+                else:
+                    decky.logger.warning(f"Shader package not found: {shader_file}")
+
+            return {
+                "status": "success",
+                "shaders": available_shaders,
+                "total_count": len(available_shaders)
+            }
+
+        except Exception as e:
+            decky.logger.error(f"Error getting available shaders: {str(e)}")
+            return {"status": "error", "message": str(e)}
 
     async def detect_steam_deck_model(self) -> dict:
         """Detect Steam Deck model (OLED vs LCD) using board name"""
@@ -196,7 +289,7 @@ class Plugin:
         marker_file = Path(self.vkbasalt_base_path) / ".installed"
         return {"exists": marker_file.exists()}
 
-    async def run_install_reshade(self, with_addon: bool = False, version: str = "latest", with_autohdr: bool = False) -> dict:
+    async def run_install_reshade(self, with_addon: bool = False, version: str = "latest", with_autohdr: bool = False, selected_shaders: list = None) -> dict:
         try:
             assets_dir = self._get_assets_dir()
             script_path = assets_dir / "reshade-install.sh"
@@ -211,7 +304,17 @@ class Plugin:
             # Explicitly set RESHADE_ADDON_SUPPORT, RESHADE_VERSION, and AUTOHDR_ENABLED based on parameters
             install_env['RESHADE_ADDON_SUPPORT'] = '1' if with_addon else '0'
             install_env['RESHADE_VERSION'] = version
-            install_env['AUTOHDR_ENABLED'] = '1' if with_autohdr else '0'  # NEW: Set AutoHDR flag
+            install_env['AUTOHDR_ENABLED'] = '1' if with_autohdr else '0'
+            
+            # Set selected shaders (if provided)
+            if selected_shaders is not None:
+                # Convert selected shaders list to comma-separated string
+                selected_shader_ids = ','.join(selected_shaders) if selected_shaders else ''
+                install_env['SELECTED_SHADERS'] = selected_shader_ids
+                decky.logger.info(f"Selected shader packages: {selected_shader_ids}")
+            else:
+                # Install all shaders (default behavior)
+                install_env['SELECTED_SHADERS'] = 'all'
             
             # Add other necessary environment variables
             install_env.update({
@@ -224,6 +327,8 @@ class Plugin:
                 install_description += " with addon support"
             if with_autohdr:
                 install_description += " and AutoHDR components"
+            if selected_shaders and selected_shaders != ['all']:
+                install_description += f" with {len(selected_shaders)} shader packages"
             
             decky.logger.info(install_description)
             decky.logger.info(f"Environment: {install_env}")
@@ -266,6 +371,8 @@ class Plugin:
                 version_display += ' (with Addon Support)'
             if with_autohdr:
                 version_display += ' and AutoHDR components'
+            if selected_shaders and selected_shaders != ['all']:
+                version_display += f' with {len(selected_shaders)} shader packages'
             
             return {"status": "success", "output": f"{version_display} installed successfully!"}
         except Exception as e:
