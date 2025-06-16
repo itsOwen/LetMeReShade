@@ -52,6 +52,10 @@ const checkVkBasaltPath = callable<[], PathCheckResponse>("check_vkbasalt_path")
 const runInstallVkBasalt = callable<[], InstallResult>("run_install_vkbasalt");
 const runUninstallVkBasalt = callable<[], InstallResult>("run_uninstall_vkbasalt");
 
+const saveShaderPreferences = callable<[string[]], InstallResult>("save_shader_preferences");
+const loadShaderPreferences = callable<[], any>("load_shader_preferences");
+const hasShaderPreferences = callable<[], any>("has_shader_preferences");
+
 function ReShadeInstallerSection() {
   const [installing, setInstalling] = useState<boolean>(false);
   const [uninstalling, setUninstalling] = useState<boolean>(false);
@@ -67,11 +71,39 @@ function ReShadeInstallerSection() {
   const [pendingAddonState, setPendingAddonState] = useState<boolean>(false);
   const [deckModel, setDeckModel] = useState<DeckModelResponse | null>(null);
   const [modelLoading, setModelLoading] = useState<boolean>(true);
+  const [shaderPreferences, setShaderPreferences] = useState<string[] | null>(null);
+  const [hasPreferences, setHasPreferences] = useState<boolean>(false);
+  const [preferencesInfo, setPreferencesInfo] = useState<any>(null);
+
 
   const versionOptions: VersionOption[] = [
     { label: 'ReShade Latest', value: 'latest' },
     { label: 'ReShade Last Version', value: 'last' }
   ];
+
+  useEffect(() => {
+    const checkPreferences = async () => {
+      try {
+        const result = await hasShaderPreferences();
+        if (result.status === "success") {
+          setHasPreferences(result.has_preferences);
+          setPreferencesInfo(result);
+
+          // Load preferences if they exist
+          if (result.has_preferences) {
+            const loadResult = await loadShaderPreferences();
+            if (loadResult.status === "success" && loadResult.selected_shaders) {
+              setShaderPreferences(loadResult.selected_shaders);
+            }
+          }
+        }
+      } catch (e) {
+        await logError(`Error checking shader preferences: ${String(e)}`);
+      }
+    };
+
+    checkPreferences();
+  }, [pathExists]);
 
   useEffect(() => {
     const checkPath = async () => {
@@ -139,30 +171,47 @@ function ReShadeInstallerSection() {
     return undefined;
   }, [uninstallResult]);
 
-  const handleInstallClick = async () => {
-    if (!selectedVersion) {
-      setInstallResult({ status: "error", message: "Please select a ReShade version" });
-      return;
+  // Add the manage shaders function
+  const handleManageShaders = async () => {
+    // Load current preferences if they exist
+    let currentPreferences: string[] = [];
+
+    if (hasPreferences) {
+      try {
+        const loadResult = await loadShaderPreferences();
+        if (loadResult.status === "success" && loadResult.selected_shaders) {
+          currentPreferences = loadResult.selected_shaders;
+        }
+      } catch (e) {
+        await logError(`Error loading preferences: ${String(e)}`);
+      }
     }
 
-    // Show shader selection modal using showModal
     const modalResult = showModal(
       <ShaderSelectionModal
         onConfirm={async (selectedShaders: string[]) => {
           try {
-            setInstalling(true);
-            const result = await runInstallReShade(
-              addonEnabled, 
-              selectedVersion.value, 
-              autoHdrEnabled, 
-              selectedShaders
-            );
-            setInstallResult(result);
+            const result = await saveShaderPreferences(selectedShaders);
+            if (result.status === "success") {
+              setShaderPreferences(selectedShaders);
+              setHasPreferences(true);
+              setPreferencesInfo({
+                has_preferences: true,
+                shader_count: selectedShaders.length
+              });
+              setInstallResult({
+                status: "success",
+                message: `Shader preferences saved! ${selectedShaders.length} packages selected.`
+              });
+            } else {
+              setInstallResult({
+                status: "error",
+                message: result.message || "Failed to save preferences"
+              });
+            }
           } catch (e) {
             setInstallResult({ status: "error", message: String(e) });
-            await logError(`Install error: ${String(e)}`);
-          } finally {
-            setInstalling(false);
+            await logError(`Save preferences error: ${String(e)}`);
           }
         }}
         onCancel={() => {
@@ -170,10 +219,92 @@ function ReShadeInstallerSection() {
         }}
         addonEnabled={addonEnabled}
         autoHdrEnabled={autoHdrEnabled}
-        selectedVersion={selectedVersion.value}
+        selectedVersion={selectedVersion?.value || 'latest'}
+        mode="manage"
+        initialSelectedShaders={currentPreferences}
         closeModal={() => modalResult.Close()}
       />
     );
+  };
+
+  // Add this helper function to render preferences info
+  const renderPreferencesInfo = () => {
+    if (!hasPreferences || !preferencesInfo) return null;
+
+    return (
+      <PanelSectionRow>
+        <div style={{
+          padding: '8px',
+          marginBottom: '8px',
+          backgroundColor: 'rgba(0, 255, 0, 0.1)',
+          borderRadius: '4px',
+          border: '1px solid rgba(0, 255, 0, 0.3)',
+          fontSize: '0.9em'
+        }}>
+          📋 Shader preferences saved ({preferencesInfo.shader_count} packages)
+          <div style={{ fontSize: '0.8em', opacity: 0.8, marginTop: '2px' }}>
+            Will be used automatically for installations
+          </div>
+        </div>
+      </PanelSectionRow>
+    );
+  };
+
+  const handleInstallClick = async () => {
+    if (!selectedVersion) {
+      setInstallResult({ status: "error", message: "Please select a ReShade version" });
+      return;
+    }
+
+    // Check if user has saved preferences
+    if (hasPreferences && shaderPreferences) {
+      // Use saved preferences directly
+      try {
+        setInstalling(true);
+        const result = await runInstallReShade(
+          addonEnabled,
+          selectedVersion.value,
+          autoHdrEnabled,
+          shaderPreferences
+        );
+        setInstallResult(result);
+      } catch (e) {
+        setInstallResult({ status: "error", message: String(e) });
+        await logError(`Install error: ${String(e)}`);
+      } finally {
+        setInstalling(false);
+      }
+    } else {
+      // Show shader selection modal as before
+      const modalResult = showModal(
+        <ShaderSelectionModal
+          onConfirm={async (selectedShaders: string[]) => {
+            try {
+              setInstalling(true);
+              const result = await runInstallReShade(
+                addonEnabled,
+                selectedVersion.value,
+                autoHdrEnabled,
+                selectedShaders
+              );
+              setInstallResult(result);
+            } catch (e) {
+              setInstallResult({ status: "error", message: String(e) });
+              await logError(`Install error: ${String(e)}`);
+            } finally {
+              setInstalling(false);
+            }
+          }}
+          onCancel={() => {
+            // Cancel handler - modal will be closed via closeModal
+          }}
+          addonEnabled={addonEnabled}
+          autoHdrEnabled={autoHdrEnabled}
+          selectedVersion={selectedVersion.value}
+          closeModal={() => modalResult.Close()}
+        />
+      );
+    }
   };
 
   const handleUninstallClick = async () => {
@@ -267,6 +398,12 @@ function ReShadeInstallerSection() {
     if (autoHdrEnabled) {
       text += " + AutoHDR";
     }
+
+    // Add indication if using saved preferences
+    if (hasPreferences && shaderPreferences) {
+      text += ` (${shaderPreferences.length} shader packages)`;
+    }
+
     return text;
   };
 
@@ -470,6 +607,16 @@ function ReShadeInstallerSection() {
               {getInstallButtonText()}
             </ButtonItem>
           </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              onClick={handleManageShaders}
+            >
+              ⚙️ Manage Shader Preferences
+            </ButtonItem>
+          </PanelSectionRow>
+
+          {renderPreferencesInfo()}
           <PanelSectionRow>
             <ButtonItem layout="below" onClick={handleUninstallClick} disabled={uninstalling}>
               {uninstalling ? "Uninstalling..." : "🗑️ Uninstall ReShade"}
