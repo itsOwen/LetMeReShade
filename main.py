@@ -568,26 +568,24 @@ class Plugin:
             
             has_main_exe = len(main_exe_files) > 0
             
-            # Check 2: Look for Linux-specific files and directories
-            linux_indicators = [
-                # Common Linux executable patterns
-                "*.x86_64", "*.x86", "*.bin", "*.sh",
-                # Common Linux directories
-                "lib", "lib64", "bin", "share",
-                # Common Linux files
-                "*.so", "*.so.*"
+            # Check 2: Look for Linux-specific file patterns only (no directories)
+            linux_file_indicators = [
+                "*.x86_64", "*.x86", "*.bin", "*.sh",  # Linux executable patterns
+                "*.so", "*.so.*"  # Linux shared libraries
             ]
             
             linux_files_found = []
-            for pattern in linux_indicators:
+            for pattern in linux_file_indicators:
                 matches = list(game_path_obj.rglob(pattern))
-                if matches:
-                    linux_files_found.extend([str(m.relative_to(game_path_obj)) for m in matches[:5]])  # Limit to 5 examples
+                # Filter to only include files (not directories)
+                file_matches = [m for m in matches if m.is_file()]
+                if file_matches:
+                    linux_files_found.extend([str(m.relative_to(game_path_obj)) for m in file_matches[:5]])  # Limit to 5 examples
             
-            # Check 3: Look for specific Linux game files
+            # Check 3: Look for Linux executables (files without extension that are ELF binaries)
             linux_executables = []
             for file in game_path_obj.iterdir():
-                if file.is_file() and file.suffix == "":  # Files without extension (common for Linux executables)
+                if file.is_file() and file.suffix == "":  # Files without extension
                     try:
                         # Check if file is executable
                         if file.stat().st_mode & 0o111:  # Has execute permission
@@ -602,45 +600,35 @@ class Plugin:
                     except Exception as e:
                         decky.logger.debug(f"Error checking file {file}: {str(e)}")
             
-            # Check 4: Look for Unity Linux indicators
-            unity_linux_indicators = [
-                "*_Data/Plugins/x86_64",
-                "*_Data/Mono",
-                "UnityPlayer.so"
+            # Check 4: Look for Unity Linux file indicators (files only)
+            unity_linux_file_patterns = [
+                "UnityPlayer.so",
+                "*_Data/Plugins/x86_64/*.so",
+                "*_Data/Mono/etc/mono/config"
             ]
             
             unity_linux_files = []
-            for pattern in unity_linux_indicators:
+            for pattern in unity_linux_file_patterns:
                 matches = list(game_path_obj.rglob(pattern))
-                if matches:
-                    unity_linux_files.extend([str(m.relative_to(game_path_obj)) for m in matches[:3]])
+                # Filter to only include files
+                file_matches = [m for m in matches if m.is_file()]
+                if file_matches:
+                    unity_linux_files.extend([str(m.relative_to(game_path_obj)) for m in file_matches[:3]])
             
-            # Check 5: Read Steam manifest to get platform info
-            steam_root = Path(decky.HOME) / ".steam" / "steam"
-            library_file = steam_root / "steamapps" / "libraryfolders.vdf"
-            manifest_platform = None
-            
-            if library_file.exists():
-                library_paths = []
-                with open(library_file, "r", encoding="utf-8") as file:
-                    for line in file:
-                        if '"path"' in line:
-                            path = line.split('"path"')[1].strip().strip('"').replace("\\\\", "/")
-                            library_paths.append(path)
-                
-                for library_path in library_paths:
-                    manifest_path = Path(library_path) / "steamapps" / f"appmanifest_{appid}.acf"
-                    if manifest_path.exists():
-                        try:
-                            with open(manifest_path, "r", encoding="utf-8") as manifest:
-                                content = manifest.read()
-                                # Look for tool information which might indicate platform
-                                if '"tool"' in content and '"1"' in content:
-                                    # This might be a tool/utility, not a game
-                                    pass
-                        except Exception as e:
-                            decky.logger.debug(f"Error reading manifest: {str(e)}")
-                        break
+            # Check 5: Look for other Linux-specific files
+            linux_specific_files = []
+            for file in game_path_obj.rglob("*"):
+                if file.is_file():
+                    file_name = file.name.lower()
+                    # Check for common Linux game files
+                    if any(pattern in file_name for pattern in [
+                        "start.sh", "run.sh", "launch.sh",  # Launch scripts
+                        ".desktop",  # Desktop files
+                        "libc.so", "libstdc++.so", "libgcc_s.so"  # Common Linux libraries
+                    ]):
+                        linux_specific_files.append(str(file.relative_to(game_path_obj)))
+                        if len(linux_specific_files) >= 5:  # Limit examples
+                            break
             
             # Decision logic
             is_linux_game = False
@@ -659,19 +647,24 @@ class Plugin:
                 reasons.append(f"Found Unity Linux files: {', '.join(unity_linux_files)}")
             
             # Medium indicators
-            if not has_main_exe and linux_files_found:
+            if not has_main_exe and len(linux_files_found) >= 3:
                 is_linux_game = True
                 confidence = "medium"
-                reasons.append(f"No Windows .exe files found, but Linux files present")
+                reasons.append(f"No Windows .exe files found, but multiple Linux files present")
+            
+            if linux_specific_files:
+                is_linux_game = True
+                confidence = "medium" if confidence == "low" else confidence
+                reasons.append(f"Found Linux-specific files: {', '.join(linux_specific_files[:3])}")
             
             # Weak indicators
-            if not has_exe_files and len(linux_files_found) > 10:
+            if not has_exe_files and len(linux_files_found) >= 1:
                 is_linux_game = True
                 confidence = "medium" if not reasons else confidence
-                reasons.append("Many Linux-style files found, no .exe files")
+                reasons.append("Linux files found, no Windows executables")
             
             # Additional context
-            total_files = len(list(game_path_obj.rglob("*"))) if game_path_obj.exists() else 0
+            total_files = len([f for f in game_path_obj.rglob("*") if f.is_file()]) if game_path_obj.exists() else 0
             
             result = {
                 "status": "success",
@@ -683,7 +676,8 @@ class Plugin:
                     "has_main_exe": has_main_exe,
                     "main_exe_count": len(main_exe_files),
                     "linux_executables": linux_executables,
-                    "linux_files_found": len(linux_files_found),
+                    "linux_files_count": len(linux_files_found),
+                    "linux_specific_files": linux_specific_files,
                     "unity_linux_files": len(unity_linux_files),
                     "total_files": total_files,
                     "game_path": str(game_path)
