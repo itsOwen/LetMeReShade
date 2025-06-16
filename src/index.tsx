@@ -503,15 +503,17 @@ function ReShadeInstallerSection() {
 
       {addonEnabled && renderDeckModelInfo()}
 
-      {/* Always show the Manage Shader Preferences button */}
-      <PanelSectionRow>
-        <ButtonItem
-          layout="below"
-          onClick={handleManageShaders}
-        >
-          ⚙️ Manage Shader Preferences
-        </ButtonItem>
-      </PanelSectionRow>
+      {/* Only show Select Packages to Install button when ReShade is not installed */}
+      {pathExists === false && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            onClick={handleManageShaders}
+          >
+            📦 Select Packages to Install
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
 
       {/* Show preferences info if they exist */}
       {renderPreferencesInfo()}
