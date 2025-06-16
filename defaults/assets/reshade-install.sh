@@ -14,6 +14,7 @@ GLOBAL_INI=${GLOBAL_INI:-"ReShade.ini"}
 RESHADE_VERSION=${RESHADE_VERSION:-"latest"}
 RESHADE_ADDON_SUPPORT=${RESHADE_ADDON_SUPPORT:-0}
 AUTOHDR_ENABLED=${AUTOHDR_ENABLED:-0}
+SELECTED_SHADERS=${SELECTED_SHADERS:-"all"}
 
 # Get the correct path to the bin directory - check both possible locations
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
@@ -96,8 +97,33 @@ setup_d3dcompiler() {
     fi
 }
 
+is_shader_selected() {
+    local shader_id="$1"
+    
+    # If SELECTED_SHADERS is "all", install all shaders
+    if [[ "$SELECTED_SHADERS" == "all" ]]; then
+        return 0
+    fi
+    
+    # If SELECTED_SHADERS is empty, install none
+    if [[ -z "$SELECTED_SHADERS" ]]; then
+        return 1
+    fi
+    
+    # Check if shader_id is in the comma-separated list
+    local IFS=','
+    for selected_shader in $SELECTED_SHADERS; do
+        if [[ "$selected_shader" == "$shader_id" ]]; then
+            return 0
+        fi
+    done
+    
+    return 1
+}
+
 setup_shaders() {
     log_message "Setting up ReShade shaders..."
+    log_message "Selected shaders: $SELECTED_SHADERS"
     
     # Create merged shader directories if needed
     if [[ $MERGE_SHADERS == 1 ]]; then
@@ -111,80 +137,146 @@ setup_shaders() {
         exit 1
     fi
     
-    # Extract shader archives
-    if [[ -f "$BIN_PATH/reshade_shaders.tar.gz" ]]; then
-        log_message "Extracting bundled reshade_shaders.tar.gz"
-        mkdir -p "$MAIN_PATH/ReShade_shaders/reshade-shaders"
-        tar -xzf "$BIN_PATH/reshade_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/reshade-shaders"
+    # Define shader packages and their corresponding IDs
+    declare -A shader_packages=(
+        ["reshade_shaders"]="reshade_shaders.tar.gz"
+        ["sweetfx_shaders"]="sweetfx_shaders.tar.gz"
+        ["martymc_shaders"]="martymc_shaders.tar.gz"
+        ["astrayfx_shaders"]="astrayfx_shaders.tar.gz"
+        ["prod80_shaders"]="prod80_shaders.tar.gz"
+        ["retroarch_shaders"]="retroarch_shaders.tar.gz"
+    )
+    
+    # ALWAYS extract ReShade core files first (essential dependencies)
+    # This ensures ReShade.fxh and other core files are always available
+    local core_archive="$BIN_PATH/reshade_shaders.tar.gz"
+    if [[ -f "$core_archive" ]]; then
+        log_message "Installing essential ReShade core files (always required)"
+        mkdir -p "$MAIN_PATH/ReShade_shaders/reshade_shaders"
+        tar -xzf "$core_archive" -C "$MAIN_PATH/ReShade_shaders/reshade_shaders"
+        
+        # Copy core files to merged directory immediately
+        if [[ $MERGE_SHADERS == 1 ]]; then
+            local core_repo_dir="$MAIN_PATH/ReShade_shaders/reshade_shaders"
+            if [[ -d "$core_repo_dir/Shaders" ]]; then
+                log_message "Copying essential ReShade core files to merged directory"
+                # Copy essential .fxh files and core shaders
+                find "$core_repo_dir/Shaders" -name "*.fxh" -exec cp {} "$MAIN_PATH/ReShade_shaders/Merged/Shaders/" \; 2>/dev/null || true
+                # Also copy any core .fx files if reshade_shaders is not explicitly selected
+                if ! is_shader_selected "reshade_shaders"; then
+                    log_message "ReShade core package not selected, copying essential core shaders too"
+                    find "$core_repo_dir/Shaders" -name "*.fx" -exec cp {} "$MAIN_PATH/ReShade_shaders/Merged/Shaders/" \; 2>/dev/null || true
+                fi
+            fi
+            if [[ -d "$core_repo_dir/Textures" ]]; then
+                log_message "Copying essential ReShade core textures to merged directory"
+                cp -rf "$core_repo_dir/Textures"/* "$MAIN_PATH/ReShade_shaders/Merged/Textures/" 2>/dev/null || true
+            fi
+        fi
     else
-        log_message "Error: reshade_shaders.tar.gz not found in bin directory"
+        log_message "Warning: Core ReShade shaders package not found - shader compilation may fail"
     fi
     
-    if [[ -f "$BIN_PATH/sweetfx_shaders.tar.gz" ]]; then
-        log_message "Extracting bundled sweetfx_shaders.tar.gz"
-        mkdir -p "$MAIN_PATH/ReShade_shaders/sweetfx-shaders"
-        tar -xzf "$BIN_PATH/sweetfx_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/sweetfx-shaders"
-    else
-        log_message "Error: sweetfx_shaders.tar.gz not found in bin directory"
-    fi
-    
-    if [[ -f "$BIN_PATH/martymc_shaders.tar.gz" ]]; then
-        log_message "Extracting bundled martymc_shaders.tar.gz"
-        mkdir -p "$MAIN_PATH/ReShade_shaders/martymc-shaders"
-        tar -xzf "$BIN_PATH/martymc_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/martymc-shaders"
-    else
-        log_message "Error: martymc_shaders.tar.gz not found in bin directory"
-    fi
-    
-    if [[ -f "$BIN_PATH/astrayfx_shaders.tar.gz" ]]; then
-        log_message "Extracting bundled astrayfx_shaders.tar.gz"
-        mkdir -p "$MAIN_PATH/ReShade_shaders/astrayfx-shaders"
-        tar -xzf "$BIN_PATH/astrayfx_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/astrayfx-shaders"
-    else
-        log_message "Error: astrayfx_shaders.tar.gz not found in bin directory"
-    fi
-    
-    if [[ -f "$BIN_PATH/prod80_shaders.tar.gz" ]]; then
-        log_message "Extracting bundled prod80_shaders.tar.gz"
-        mkdir -p "$MAIN_PATH/ReShade_shaders/prod80-shaders"
-        tar -xzf "$BIN_PATH/prod80_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/prod80-shaders"
-    else
-        log_message "Error: prod80_shaders.tar.gz not found in bin directory"
-    fi
-    
-    if [[ -f "$BIN_PATH/retroarch_shaders.tar.gz" ]]; then
-        log_message "Extracting bundled retroarch_shaders.tar.gz"
-        mkdir -p "$MAIN_PATH/ReShade_shaders/retroarch-shaders"
-        tar -xzf "$BIN_PATH/retroarch_shaders.tar.gz" -C "$MAIN_PATH/ReShade_shaders/retroarch-shaders"
-    else
-        log_message "Error: retroarch_shaders.tar.gz not found in bin directory"
-    fi
+    # Extract selected shader archives (skip reshade_shaders if already processed)
+    for shader_id in "${!shader_packages[@]}"; do
+        local archive_name="${shader_packages[$shader_id]}"
+        local archive_path="$BIN_PATH/$archive_name"
+        
+        if is_shader_selected "$shader_id"; then
+            if [[ "$shader_id" == "reshade_shaders" ]]; then
+                log_message "ReShade core shaders already processed, skipping duplicate extraction"
+                continue
+            fi
+            
+            if [[ -f "$archive_path" ]]; then
+                log_message "Extracting selected shader package: $archive_name"
+                mkdir -p "$MAIN_PATH/ReShade_shaders/$shader_id"
+                tar -xzf "$archive_path" -C "$MAIN_PATH/ReShade_shaders/$shader_id"
+            else
+                log_message "Warning: Selected shader package not found: $archive_path"
+            fi
+        else
+            log_message "Skipping shader package: $shader_id (not selected)"
+        fi
+    done
     
     # Merge shaders if enabled
     if [[ $MERGE_SHADERS == 1 ]]; then
-        log_message "Merging shaders..."
-        # Copy from shader repositories to merged directory
-        for repo_dir in "$MAIN_PATH/ReShade_shaders"/*-shaders; do
-            if [[ -d "$repo_dir/Shaders" ]]; then
-                cp -rf "$repo_dir/Shaders/"* "$MAIN_PATH/ReShade_shaders/Merged/Shaders/"
-            fi
-            if [[ -d "$repo_dir/Textures" ]]; then
-                cp -rf "$repo_dir/Textures/"* "$MAIN_PATH/ReShade_shaders/Merged/Textures/"
+        log_message "Merging selected shaders..."
+        # Copy from selected shader repositories to merged directory (skip reshade_shaders if already processed)
+        for shader_id in "${!shader_packages[@]}"; do
+            if is_shader_selected "$shader_id"; then
+                if [[ "$shader_id" == "reshade_shaders" ]]; then
+                    # Only merge the remaining files that weren't copied as core files
+                    local repo_dir="$MAIN_PATH/ReShade_shaders/$shader_id"
+                    if [[ -d "$repo_dir/Shaders" ]]; then
+                        log_message "Merging remaining ReShade core shader files"
+                        # Copy any .fx files (the .fxh files were already copied)
+                        find "$repo_dir/Shaders" -name "*.fx" -exec cp {} "$MAIN_PATH/ReShade_shaders/Merged/Shaders/" \; 2>/dev/null || true
+                    fi
+                    continue
+                fi
+                
+                local repo_dir="$MAIN_PATH/ReShade_shaders/$shader_id"
+                if [[ -d "$repo_dir" ]]; then
+                    log_message "Merging all content from $shader_id"
+                    
+                    # Copy Shaders directory contents (all files)
+                    if [[ -d "$repo_dir/Shaders" ]]; then
+                        log_message "Copying all shader files from $shader_id/Shaders"
+                        cp -rf "$repo_dir/Shaders"/* "$MAIN_PATH/ReShade_shaders/Merged/Shaders/" 2>/dev/null || true
+                    fi
+                    
+                    # Copy Textures directory contents (all files)
+                    if [[ -d "$repo_dir/Textures" ]]; then
+                        log_message "Copying all texture files from $shader_id/Textures"
+                        cp -rf "$repo_dir/Textures"/* "$MAIN_PATH/ReShade_shaders/Merged/Textures/" 2>/dev/null || true
+                    fi
+                    
+                    # Copy any root-level shader files directly to Shaders directory
+                    if find "$repo_dir" -maxdepth 1 -name "*.fx" -o -name "*.fxh" -o -name "*.hlsl" -o -name "*.inc" | grep -q .; then
+                        log_message "Copying root-level shader files from $shader_id"
+                        find "$repo_dir" -maxdepth 1 \( -name "*.fx" -o -name "*.fxh" -o -name "*.hlsl" -o -name "*.inc" \) -exec cp {} "$MAIN_PATH/ReShade_shaders/Merged/Shaders/" \; 2>/dev/null || true
+                    fi
+                    
+                    # Copy any other directories that might contain shader resources
+                    for subdir in "$repo_dir"/*; do
+                        if [[ -d "$subdir" && "$(basename "$subdir")" != "Shaders" && "$(basename "$subdir")" != "Textures" ]]; then
+                            subdir_name=$(basename "$subdir")
+                            log_message "Copying additional directory: $subdir_name"
+                            mkdir -p "$MAIN_PATH/ReShade_shaders/Merged/$subdir_name"
+                            cp -rf "$subdir"/* "$MAIN_PATH/ReShade_shaders/Merged/$subdir_name/" 2>/dev/null || true
+                        fi
+                    done
+                fi
             fi
         done
         
-        # Handle external shaders
+        # Handle external shaders (copy ALL files)
         if [[ -d "$MAIN_PATH/External_shaders" ]]; then
+            log_message "Copying external shader files"
             for file in "$MAIN_PATH/External_shaders"/*; do
-                [[ -f $file ]] && ln -sf "$file" "$MAIN_PATH/ReShade_shaders/Merged/Shaders/"
+                [[ -f $file ]] && cp "$file" "$MAIN_PATH/ReShade_shaders/Merged/Shaders/" 2>/dev/null || true
             done
         fi
         
-        # NEW: Copy any loose .fx and .fxh files from main ReShade_shaders directory to Merged
-        log_message "Copying loose shader files to merged directory"
-        for file in "$MAIN_PATH/ReShade_shaders"/*.fx "$MAIN_PATH/ReShade_shaders"/*.fxh; do
-            [[ -f "$file" ]] && cp "$file" "$MAIN_PATH/ReShade_shaders/Merged/Shaders/"
-        done
+        # Copy any loose files from main ReShade_shaders directory to Merged/Shaders
+        log_message "Copying any loose shader files to merged directory"
+        find "$MAIN_PATH/ReShade_shaders" -maxdepth 1 -type f \( -name "*.fx" -o -name "*.fxh" -o -name "*.hlsl" -o -name "*.inc" -o -name "*.txt" -o -name "*.md" \) -exec cp {} "$MAIN_PATH/ReShade_shaders/Merged/Shaders/" \; 2>/dev/null || true
+    fi
+    
+    # Count installed shader packages for reporting
+    local installed_count=0
+    for shader_id in "${!shader_packages[@]}"; do
+        if is_shader_selected "$shader_id"; then
+            ((installed_count++))
+        fi
+    done
+    
+    if [[ $installed_count -eq 0 ]]; then
+        log_message "Warning: No shader packages were selected, but core ReShade files were installed"
+    else
+        log_message "Successfully installed $installed_count shader packages plus essential ReShade core files"
     fi
 }
 
@@ -210,15 +302,28 @@ setup_autohdr() {
         temp_autohdr_dir=$(mktemp -d)
         tar -xzf "$BIN_PATH/advanced_autohdr_effect.tar.gz" -C "$temp_autohdr_dir"
         
-        # Copy all .fx and .fxh files to the main shader directory
-        find "$temp_autohdr_dir" -name "*.fx" -exec cp {} "$MAIN_PATH/ReShade_shaders/" \;
-        find "$temp_autohdr_dir" -name "*.fxh" -exec cp {} "$MAIN_PATH/ReShade_shaders/" \;
+        # Copy ALL files recursively to the main shader directory
+        log_message "Copying all AutoHDR files to shader directory"
+        if [[ -d "$temp_autohdr_dir" ]]; then
+            # Copy all files and subdirectories
+            cp -rf "$temp_autohdr_dir"/* "$MAIN_PATH/ReShade_shaders/" 2>/dev/null || true
+        fi
         
         # If we're using merged shaders, also copy to merged directory
         if [[ $MERGE_SHADERS == 1 ]]; then
-            log_message "Copying AutoHDR effects to merged shaders directory"
-            find "$temp_autohdr_dir" -name "*.fx" -exec cp {} "$MAIN_PATH/ReShade_shaders/Merged/Shaders/" \;
-            find "$temp_autohdr_dir" -name "*.fxh" -exec cp {} "$MAIN_PATH/ReShade_shaders/Merged/Shaders/" \;
+            log_message "Copying AutoHDR files to merged shaders directory"
+            if [[ -d "$temp_autohdr_dir" ]]; then
+                # Copy all files and subdirectories to merged directory
+                cp -rf "$temp_autohdr_dir"/* "$MAIN_PATH/ReShade_shaders/Merged/" 2>/dev/null || true
+                
+                # Ensure proper structure for Shaders and Textures subdirectories
+                if [[ -d "$temp_autohdr_dir/Shaders" ]]; then
+                    cp -rf "$temp_autohdr_dir/Shaders"/* "$MAIN_PATH/ReShade_shaders/Merged/Shaders/" 2>/dev/null || true
+                fi
+                if [[ -d "$temp_autohdr_dir/Textures" ]]; then
+                    cp -rf "$temp_autohdr_dir/Textures"/* "$MAIN_PATH/ReShade_shaders/Merged/Textures/" 2>/dev/null || true
+                fi
+            fi
         fi
         
         # Clean up temporary directory
@@ -341,6 +446,7 @@ main() {
     log_message "Bin path: $BIN_PATH"
     log_message "ReShade version: $RESHADE_VERSION"
     log_message "AutoHDR enabled: $AUTOHDR_ENABLED"
+    log_message "Selected shaders: $SELECTED_SHADERS"
     
     check_dependencies
     setup_directories
@@ -368,6 +474,32 @@ main() {
     
     echo -e "$SEPERATOR\nReShade $RESHADE_VERSION installation completed successfully"
     echo "Shaders installed to: $MAIN_PATH/ReShade_shaders"
+    
+    # Report installed shader packages
+    if [[ "$SELECTED_SHADERS" != "all" ]]; then
+        local IFS=','
+        local installed_packages=()
+        for selected_shader in $SELECTED_SHADERS; do
+            case "$selected_shader" in
+                "reshade_shaders") installed_packages+=("ReShade Community Shaders") ;;
+                "sweetfx_shaders") installed_packages+=("SweetFX Shaders") ;;
+                "martymc_shaders") installed_packages+=("MartyMcFly's RT Shaders") ;;
+                "astrayfx_shaders") installed_packages+=("AstrayFX Shaders") ;;
+                "prod80_shaders") installed_packages+=("Prod80's Shaders") ;;
+                "retroarch_shaders") installed_packages+=("RetroArch Shaders") ;;
+            esac
+        done
+        
+        if [[ ${#installed_packages[@]} -gt 0 ]]; then
+            echo "Selected shader packages:"
+            printf '  - %s\n' "${installed_packages[@]}"
+        else
+            echo "No shader packages were installed"
+        fi
+    else
+        echo "All available shader packages installed"
+    fi
+    
     [[ -f "$MAIN_PATH/$GLOBAL_INI" ]] && echo "ReShade.ini created at: $MAIN_PATH/$GLOBAL_INI"
     if [[ $RESHADE_ADDON_SUPPORT -eq 1 ]]; then
         echo "Installed with addon support"

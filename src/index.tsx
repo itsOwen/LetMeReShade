@@ -12,6 +12,7 @@ import { definePlugin, callable } from "@decky/api";
 import { IoMdColorPalette } from "react-icons/io";
 import HeroicGamesSection from "./HeroicGamesSection";
 import SteamGamesSection from "./SteamGamesSection";
+import ShaderSelectionModal from "./ShaderSelectionModal";
 
 interface InstallResult {
   status: string;
@@ -40,7 +41,7 @@ interface DeckModelResponse {
   message?: string;
 }
 
-const runInstallReShade = callable<[boolean, string, boolean], InstallResult>("run_install_reshade");
+const runInstallReShade = callable<[boolean, string, boolean, string[]], InstallResult>("run_install_reshade");
 const runUninstallReShade = callable<[], InstallResult>("run_uninstall_reshade");
 const checkReShadePath = callable<[], PathCheckResponse>("check_reshade_path");
 const detectSteamDeckModel = callable<[], DeckModelResponse>("detect_steam_deck_model");
@@ -144,16 +145,35 @@ function ReShadeInstallerSection() {
       return;
     }
 
-    try {
-      setInstalling(true);
-      const result = await runInstallReShade(addonEnabled, selectedVersion.value, autoHdrEnabled);
-      setInstallResult(result);
-    } catch (e) {
-      setInstallResult({ status: "error", message: String(e) });
-      await logError(`Install error: ${String(e)}`);
-    } finally {
-      setInstalling(false);
-    }
+    // Show shader selection modal using showModal
+    const modalResult = showModal(
+      <ShaderSelectionModal
+        onConfirm={async (selectedShaders: string[]) => {
+          try {
+            setInstalling(true);
+            const result = await runInstallReShade(
+              addonEnabled, 
+              selectedVersion.value, 
+              autoHdrEnabled, 
+              selectedShaders
+            );
+            setInstallResult(result);
+          } catch (e) {
+            setInstallResult({ status: "error", message: String(e) });
+            await logError(`Install error: ${String(e)}`);
+          } finally {
+            setInstalling(false);
+          }
+        }}
+        onCancel={() => {
+          // Cancel handler - modal will be closed via closeModal
+        }}
+        addonEnabled={addonEnabled}
+        autoHdrEnabled={autoHdrEnabled}
+        selectedVersion={selectedVersion.value}
+        closeModal={() => modalResult.Close()}
+      />
+    );
   };
 
   const handleUninstallClick = async () => {
