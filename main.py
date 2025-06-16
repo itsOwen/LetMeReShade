@@ -6,6 +6,7 @@ from pathlib import Path
 import json
 import glob
 import re
+import time
 
 class Plugin:
     def __init__(self):
@@ -1678,6 +1679,80 @@ class Plugin:
             }
         except Exception as e:
             decky.logger.error(f"Error detecting API for Heroic game: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    async def save_shader_preferences(self, selected_shaders: list) -> dict:
+        """Save user's shader preferences to a file"""
+        try:
+            preferences_file = os.path.join(self.main_path, "shader_preferences.json")
+            
+            preferences = {
+                "selected_shaders": selected_shaders,
+                "last_updated": int(time.time()),
+                "version": "1.0"
+            }
+            
+            # Ensure directory exists
+            os.makedirs(self.main_path, exist_ok=True)
+            
+            with open(preferences_file, 'w') as f:
+                json.dump(preferences, f, indent=2)
+            
+            decky.logger.info(f"Saved shader preferences: {selected_shaders}")
+            return {"status": "success", "message": "Shader preferences saved successfully"}
+            
+        except Exception as e:
+            decky.logger.error(f"Error saving shader preferences: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    async def load_shader_preferences(self) -> dict:
+        """Load user's shader preferences from file"""
+        try:
+            preferences_file = os.path.join(self.main_path, "shader_preferences.json")
+            
+            if not os.path.exists(preferences_file):
+                return {"status": "success", "preferences": None, "message": "No preferences file found"}
+            
+            with open(preferences_file, 'r') as f:
+                preferences = json.load(f)
+            
+            # Validate the preferences structure
+            if "selected_shaders" not in preferences:
+                return {"status": "error", "message": "Invalid preferences file format"}
+            
+            decky.logger.info(f"Loaded shader preferences: {preferences['selected_shaders']}")
+            return {
+                "status": "success", 
+                "preferences": preferences,
+                "selected_shaders": preferences["selected_shaders"]
+            }
+            
+        except Exception as e:
+            decky.logger.error(f"Error loading shader preferences: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    async def has_shader_preferences(self) -> dict:
+        """Check if user has saved shader preferences"""
+        try:
+            preferences_file = os.path.join(self.main_path, "shader_preferences.json")
+            exists = os.path.exists(preferences_file)
+            
+            if exists:
+                # Also load and return a summary
+                result = await self.load_shader_preferences()
+                if result["status"] == "success" and result["preferences"]:
+                    shader_count = len(result["selected_shaders"])
+                    return {
+                        "status": "success",
+                        "has_preferences": True,
+                        "shader_count": shader_count,
+                        "last_updated": result["preferences"].get("last_updated", 0)
+                    }
+            
+            return {"status": "success", "has_preferences": False}
+            
+        except Exception as e:
+            decky.logger.error(f"Error checking shader preferences: {str(e)}")
             return {"status": "error", "message": str(e)}
 
     async def log_error(self, error: str) -> None:
