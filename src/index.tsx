@@ -47,14 +47,15 @@ const checkReShadePath = callable<[], PathCheckResponse>("check_reshade_path");
 const detectSteamDeckModel = callable<[], DeckModelResponse>("detect_steam_deck_model");
 const logError = callable<[string], void>("log_error");
 
+// Shader preferences callables
+const saveShaderPreferences = callable<[string[]], InstallResult>("save_shader_preferences");
+const loadShaderPreferences = callable<[], any>("load_shader_preferences");
+const hasShaderPreferences = callable<[], any>("has_shader_preferences");
+
 // VkBasalt callables
 const checkVkBasaltPath = callable<[], PathCheckResponse>("check_vkbasalt_path");
 const runInstallVkBasalt = callable<[], InstallResult>("run_install_vkbasalt");
 const runUninstallVkBasalt = callable<[], InstallResult>("run_uninstall_vkbasalt");
-
-const saveShaderPreferences = callable<[string[]], InstallResult>("save_shader_preferences");
-const loadShaderPreferences = callable<[], any>("load_shader_preferences");
-const hasShaderPreferences = callable<[], any>("has_shader_preferences");
 
 function ReShadeInstallerSection() {
   const [installing, setInstalling] = useState<boolean>(false);
@@ -71,39 +72,15 @@ function ReShadeInstallerSection() {
   const [pendingAddonState, setPendingAddonState] = useState<boolean>(false);
   const [deckModel, setDeckModel] = useState<DeckModelResponse | null>(null);
   const [modelLoading, setModelLoading] = useState<boolean>(true);
-  const [shaderPreferences, setShaderPreferences] = useState<string[] | null>(null);
+  
+  // State for shader preferences (removed shaderPreferences since it's not used)
   const [hasPreferences, setHasPreferences] = useState<boolean>(false);
   const [preferencesInfo, setPreferencesInfo] = useState<any>(null);
-
 
   const versionOptions: VersionOption[] = [
     { label: 'ReShade Latest', value: 'latest' },
     { label: 'ReShade Last Version', value: 'last' }
   ];
-
-  useEffect(() => {
-    const checkPreferences = async () => {
-      try {
-        const result = await hasShaderPreferences();
-        if (result.status === "success") {
-          setHasPreferences(result.has_preferences);
-          setPreferencesInfo(result);
-
-          // Load preferences if they exist
-          if (result.has_preferences) {
-            const loadResult = await loadShaderPreferences();
-            if (loadResult.status === "success" && loadResult.selected_shaders) {
-              setShaderPreferences(loadResult.selected_shaders);
-            }
-          }
-        }
-      } catch (e) {
-        await logError(`Error checking shader preferences: ${String(e)}`);
-      }
-    };
-
-    checkPreferences();
-  }, [pathExists]);
 
   useEffect(() => {
     const checkPath = async () => {
@@ -155,6 +132,23 @@ function ReShadeInstallerSection() {
     detectDeckModel();
   }, []);
 
+  // Check for existing preferences
+  useEffect(() => {
+    const checkPreferences = async () => {
+      try {
+        const result = await hasShaderPreferences();
+        if (result.status === "success") {
+          setHasPreferences(result.has_preferences);
+          setPreferencesInfo(result);
+        }
+      } catch (e) {
+        await logError(`Error checking shader preferences: ${String(e)}`);
+      }
+    };
+    
+    checkPreferences();
+  }, []);
+
   useEffect(() => {
     if (installResult) {
       const timer = setTimeout(() => setInstallResult(null), 5000);
@@ -171,20 +165,90 @@ function ReShadeInstallerSection() {
     return undefined;
   }, [uninstallResult]);
 
-  // Add the manage shaders function
+  const handleInstallClick = async () => {
+    if (!selectedVersion) {
+      setInstallResult({ status: "error", message: "Please select a ReShade version" });
+      return;
+    }
+
+    // Always check for current preferences first
+    try {
+      const prefResult = await loadShaderPreferences();
+      
+      if (prefResult.status === "success" && prefResult.selected_shaders && prefResult.selected_shaders.length > 0) {
+        // Use saved preferences directly - no popup
+        setInstalling(true);
+        const result = await runInstallReShade(
+          addonEnabled, 
+          selectedVersion.value, 
+          autoHdrEnabled, 
+          prefResult.selected_shaders
+        );
+        setInstallResult(result);
+        setInstalling(false);
+      } else {
+        // No preferences saved, show selection modal
+        const modalResult = showModal(
+          <ShaderSelectionModal
+            onConfirm={async (selectedShaders: string[]) => {
+              try {
+                setInstalling(true);
+                const result = await runInstallReShade(
+                  addonEnabled, 
+                  selectedVersion.value, 
+                  autoHdrEnabled, 
+                  selectedShaders
+                );
+                setInstallResult(result);
+              } catch (e) {
+                setInstallResult({ status: "error", message: String(e) });
+                await logError(`Install error: ${String(e)}`);
+              } finally {
+                setInstalling(false);
+              }
+            }}
+            onCancel={() => {
+              // Cancel handler - modal will be closed via closeModal
+            }}
+            addonEnabled={addonEnabled}
+            autoHdrEnabled={autoHdrEnabled}
+            selectedVersion={selectedVersion.value}
+            closeModal={() => modalResult.Close()}
+          />
+        );
+      }
+    } catch (e) {
+      setInstallResult({ status: "error", message: String(e) });
+      await logError(`Install error: ${String(e)}`);
+    }
+  };
+
+  const handleUninstallClick = async () => {
+    try {
+      setUninstalling(true);
+      const result = await runUninstallReShade();
+      setUninstallResult(result);
+      setAddonEnabled(false);
+      setAutoHdrEnabled(false);
+    } catch (e) {
+      setUninstallResult({ status: "error", message: String(e) });
+      await logError(`Uninstall error: ${String(e)}`);
+    } finally {
+      setUninstalling(false);
+    }
+  };
+
   const handleManageShaders = async () => {
     // Load current preferences if they exist
     let currentPreferences: string[] = [];
-
-    if (hasPreferences) {
-      try {
-        const loadResult = await loadShaderPreferences();
-        if (loadResult.status === "success" && loadResult.selected_shaders) {
-          currentPreferences = loadResult.selected_shaders;
-        }
-      } catch (e) {
-        await logError(`Error loading preferences: ${String(e)}`);
+    
+    try {
+      const loadResult = await loadShaderPreferences();
+      if (loadResult.status === "success" && loadResult.selected_shaders) {
+        currentPreferences = loadResult.selected_shaders;
       }
+    } catch (e) {
+      await logError(`Error loading preferences: ${String(e)}`);
     }
 
     const modalResult = showModal(
@@ -193,20 +257,21 @@ function ReShadeInstallerSection() {
           try {
             const result = await saveShaderPreferences(selectedShaders);
             if (result.status === "success") {
-              setShaderPreferences(selectedShaders);
+              // Update the state variables immediately
               setHasPreferences(true);
               setPreferencesInfo({
                 has_preferences: true,
-                shader_count: selectedShaders.length
+                shader_count: selectedShaders.length,
+                last_updated: Date.now()
               });
-              setInstallResult({
-                status: "success",
-                message: `Shader preferences saved! ${selectedShaders.length} packages selected.`
+              setInstallResult({ 
+                status: "success", 
+                message: `Shader preferences saved! ${selectedShaders.length} packages selected.` 
               });
             } else {
-              setInstallResult({
-                status: "error",
-                message: result.message || "Failed to save preferences"
+              setInstallResult({ 
+                status: "error", 
+                message: result.message || "Failed to save preferences" 
               });
             }
           } catch (e) {
@@ -225,101 +290,6 @@ function ReShadeInstallerSection() {
         closeModal={() => modalResult.Close()}
       />
     );
-  };
-
-  // Add this helper function to render preferences info
-  const renderPreferencesInfo = () => {
-    if (!hasPreferences || !preferencesInfo) return null;
-
-    return (
-      <PanelSectionRow>
-        <div style={{
-          padding: '8px',
-          marginBottom: '8px',
-          backgroundColor: 'rgba(0, 255, 0, 0.1)',
-          borderRadius: '4px',
-          border: '1px solid rgba(0, 255, 0, 0.3)',
-          fontSize: '0.9em'
-        }}>
-          📋 Shader preferences saved ({preferencesInfo.shader_count} packages)
-          <div style={{ fontSize: '0.8em', opacity: 0.8, marginTop: '2px' }}>
-            Will be used automatically for installations
-          </div>
-        </div>
-      </PanelSectionRow>
-    );
-  };
-
-  const handleInstallClick = async () => {
-    if (!selectedVersion) {
-      setInstallResult({ status: "error", message: "Please select a ReShade version" });
-      return;
-    }
-
-    // Check if user has saved preferences
-    if (hasPreferences && shaderPreferences) {
-      // Use saved preferences directly
-      try {
-        setInstalling(true);
-        const result = await runInstallReShade(
-          addonEnabled,
-          selectedVersion.value,
-          autoHdrEnabled,
-          shaderPreferences
-        );
-        setInstallResult(result);
-      } catch (e) {
-        setInstallResult({ status: "error", message: String(e) });
-        await logError(`Install error: ${String(e)}`);
-      } finally {
-        setInstalling(false);
-      }
-    } else {
-      // Show shader selection modal as before
-      const modalResult = showModal(
-        <ShaderSelectionModal
-          onConfirm={async (selectedShaders: string[]) => {
-            try {
-              setInstalling(true);
-              const result = await runInstallReShade(
-                addonEnabled,
-                selectedVersion.value,
-                autoHdrEnabled,
-                selectedShaders
-              );
-              setInstallResult(result);
-            } catch (e) {
-              setInstallResult({ status: "error", message: String(e) });
-              await logError(`Install error: ${String(e)}`);
-            } finally {
-              setInstalling(false);
-            }
-          }}
-          onCancel={() => {
-            // Cancel handler - modal will be closed via closeModal
-          }}
-          addonEnabled={addonEnabled}
-          autoHdrEnabled={autoHdrEnabled}
-          selectedVersion={selectedVersion.value}
-          closeModal={() => modalResult.Close()}
-        />
-      );
-    }
-  };
-
-  const handleUninstallClick = async () => {
-    try {
-      setUninstalling(true);
-      const result = await runUninstallReShade();
-      setUninstallResult(result);
-      setAddonEnabled(false);
-      setAutoHdrEnabled(false);
-    } catch (e) {
-      setUninstallResult({ status: "error", message: String(e) });
-      await logError(`Uninstall error: ${String(e)}`);
-    } finally {
-      setUninstalling(false);
-    }
   };
 
   const handleAddonToggle = () => {
@@ -398,12 +368,12 @@ function ReShadeInstallerSection() {
     if (autoHdrEnabled) {
       text += " + AutoHDR";
     }
-
+    
     // Add indication if using saved preferences
-    if (hasPreferences && shaderPreferences) {
-      text += ` (${shaderPreferences.length} shader packages)`;
+    if (hasPreferences && preferencesInfo && preferencesInfo.shader_count > 0) {
+      text += ` (${preferencesInfo.shader_count} shader packages)`;
     }
-
+    
     return text;
   };
 
@@ -487,6 +457,28 @@ function ReShadeInstallerSection() {
     return null;
   };
 
+  const renderPreferencesInfo = () => {
+    if (!hasPreferences || !preferencesInfo) return null;
+    
+    return (
+      <PanelSectionRow>
+        <div style={{
+          padding: '8px',
+          marginBottom: '8px',
+          backgroundColor: 'rgba(0, 255, 0, 0.1)',
+          borderRadius: '4px',
+          border: '1px solid rgba(0, 255, 0, 0.3)',
+          fontSize: '0.9em'
+        }}>
+          📋 Shader preferences saved ({preferencesInfo.shader_count} packages)
+          <div style={{ fontSize: '0.8em', opacity: 0.8, marginTop: '2px' }}>
+            Will be used automatically for installations
+          </div>
+        </div>
+      </PanelSectionRow>
+    );
+  };
+
   return (
     <PanelSection title="ReShade Management">
       {pathExists !== null && (
@@ -511,120 +503,86 @@ function ReShadeInstallerSection() {
 
       {addonEnabled && renderDeckModelInfo()}
 
-      {pathExists === false && (
-        <>
-          <PanelSectionRow>
-            <DropdownItem
-              rgOptions={versionOptions.map(version => ({
-                data: version.value,
-                label: version.label
-              }))}
-              selectedOption={selectedVersion ? selectedVersion.value : undefined}
-              onChange={(option) => {
-                const selected = versionOptions.find(v => v.value === option.data);
-                if (selected) {
-                  setSelectedVersion(selected);
-                }
-              }}
-              strDefaultLabel="Select ReShade version..."
-            />
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <ToggleField
-              label="Enable Addon Support"
-              description="Install ReShade with addon support"
-              checked={showingAddonDialog ? pendingAddonState : addonEnabled}
-              onChange={handleAddonToggle}
-              disabled={showingAddonDialog}
-            />
-          </PanelSectionRow>
-          {addonEnabled && (
-            <PanelSectionRow>
-              <ToggleField
-                label="Include AutoHDR Components"
-                description="For Steam Deck OLED HDR gaming (DX10/11/12 only)"
-                checked={autoHdrEnabled}
-                onChange={handleAutoHdrToggle}
-              />
-            </PanelSectionRow>
-          )}
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              onClick={handleInstallClick}
-              disabled={installing || !selectedVersion}
-            >
-              {getInstallButtonText()}
-            </ButtonItem>
-          </PanelSectionRow>
-        </>
+      {/* Always show the Manage Shader Preferences button */}
+      <PanelSectionRow>
+        <ButtonItem
+          layout="below"
+          onClick={handleManageShaders}
+        >
+          ⚙️ Manage Shader Preferences
+        </ButtonItem>
+      </PanelSectionRow>
+
+      {/* Show preferences info if they exist */}
+      {renderPreferencesInfo()}
+
+      {/* Version selection dropdown - always show */}
+      <PanelSectionRow>
+        <DropdownItem
+          rgOptions={versionOptions.map(version => ({
+            data: version.value,
+            label: version.label
+          }))}
+          selectedOption={selectedVersion ? selectedVersion.value : undefined}
+          onChange={(option) => {
+            const selected = versionOptions.find(v => v.value === option.data);
+            if (selected) {
+              setSelectedVersion(selected);
+            }
+          }}
+          strDefaultLabel="Select ReShade version..."
+        />
+      </PanelSectionRow>
+
+      {/* Addon support toggle - always show */}
+      <PanelSectionRow>
+        <ToggleField
+          label="Enable Addon Support"
+          description={pathExists ? "Changes require reinstallation" : "Install ReShade with addon support"}
+          checked={showingAddonDialog ? pendingAddonState : addonEnabled}
+          onChange={handleAddonToggle}
+          disabled={showingAddonDialog}
+        />
+      </PanelSectionRow>
+
+      {/* AutoHDR toggle - show when addon is enabled */}
+      {addonEnabled && (
+        <PanelSectionRow>
+          <ToggleField
+            label="Include AutoHDR Components"
+            description="For Steam Deck OLED HDR gaming (DX10/11/12 only)"
+            checked={autoHdrEnabled}
+            onChange={handleAutoHdrToggle}
+          />
+        </PanelSectionRow>
       )}
 
+      {/* Version mismatch warning if ReShade is installed */}
+      {getVersionMismatchWarning()}
+
+      {/* Install button - always show when version is selected */}
+      {selectedVersion && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            onClick={handleInstallClick}
+            disabled={installing}
+          >
+            {getInstallButtonText()}
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+
+      {/* Uninstall button - only show when ReShade is installed */}
       {pathExists === true && (
-        <>
-          {getVersionMismatchWarning()}
-          <PanelSectionRow>
-            <DropdownItem
-              rgOptions={versionOptions.map(version => ({
-                data: version.value,
-                label: version.label
-              }))}
-              selectedOption={selectedVersion ? selectedVersion.value : undefined}
-              onChange={(option) => {
-                const selected = versionOptions.find(v => v.value === option.data);
-                if (selected) {
-                  setSelectedVersion(selected);
-                }
-              }}
-              strDefaultLabel="Select ReShade version..."
-            />
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <ToggleField
-              label="Enable Addon Support"
-              description="Changes require reinstallation"
-              checked={showingAddonDialog ? pendingAddonState : addonEnabled}
-              onChange={handleAddonToggle}
-              disabled={showingAddonDialog}
-            />
-          </PanelSectionRow>
-          {addonEnabled && (
-            <PanelSectionRow>
-              <ToggleField
-                label="Include AutoHDR Components"
-                description="For Steam Deck OLED HDR gaming (DX10/11/12 only)"
-                checked={autoHdrEnabled}
-                onChange={handleAutoHdrToggle}
-              />
-            </PanelSectionRow>
-          )}
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              onClick={handleInstallClick}
-              disabled={installing || !selectedVersion}
-            >
-              {getInstallButtonText()}
-            </ButtonItem>
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              onClick={handleManageShaders}
-            >
-              ⚙️ Manage Shader Preferences
-            </ButtonItem>
-          </PanelSectionRow>
-
-          {renderPreferencesInfo()}
-          <PanelSectionRow>
-            <ButtonItem layout="below" onClick={handleUninstallClick} disabled={uninstalling}>
-              {uninstalling ? "Uninstalling..." : "🗑️ Uninstall ReShade"}
-            </ButtonItem>
-          </PanelSectionRow>
-        </>
+        <PanelSectionRow>
+          <ButtonItem layout="below" onClick={handleUninstallClick} disabled={uninstalling}>
+            {uninstalling ? "Uninstalling..." : "🗑️ Uninstall ReShade"}
+          </ButtonItem>
+        </PanelSectionRow>
       )}
 
+      {/* Install result */}
       {installResult && (
         <PanelSectionRow>
           <div style={{
@@ -635,12 +593,13 @@ function ReShadeInstallerSection() {
             color: installResult.status === "success" ? "green" : "red"
           }}>
             {installResult.status === "success" ?
-              `✅ ${installResult.output || "ReShade installed successfully!"}` :
-              `❌ Error: ${installResult.message || "Installation failed"}`}
+              `✅ ${installResult.output || installResult.message || "Operation completed successfully!"}` :
+              `❌ Error: ${installResult.message || "Operation failed"}`}
           </div>
         </PanelSectionRow>
       )}
 
+      {/* Uninstall result */}
       {uninstallResult && (
         <PanelSectionRow>
           <div style={{
