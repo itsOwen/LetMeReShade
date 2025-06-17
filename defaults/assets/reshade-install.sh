@@ -433,6 +433,35 @@ setup_reshade_ini() {
                 sed -i "s#_SHADSED_#$WINE_MAIN_PATH\\\ReShade_shaders\\\Merged\\\Shaders#g" "$MAIN_PATH/$GLOBAL_INI"
                 sed -i "s#_TEXSED_#$WINE_MAIN_PATH\\\ReShade_shaders\\\Merged\\\Textures#g" "$MAIN_PATH/$GLOBAL_INI"
             fi
+            
+            # Set proper permissions for the global ReShade.ini (read/write for all)
+            chmod 666 "$MAIN_PATH/$GLOBAL_INI"
+            log_message "Set proper permissions (666) for global ReShade.ini"
+            
+            # Create a global ReShadePreset.ini template as well
+            local global_preset="$MAIN_PATH/ReShadePreset.ini"
+            if [[ ! -f "$global_preset" ]]; then
+                cat > "$global_preset" << 'EOF'
+# Global ReShade Preset Configuration Template
+# This file will be automatically populated when you save presets in ReShade
+# Press HOME key in-game to open ReShade overlay
+# Go to Settings -> General -> "Reload all shaders" if shaders don't appear
+
+# Example preset configuration:
+# [Preset1]
+# Techniques=SMAA,Clarity,LumaSharpen
+# PreprocessorDefinitions=
+
+# Uncomment and modify the lines below to create a default preset:
+# [Default]
+# Techniques=
+# PreprocessorDefinitions=
+EOF
+                
+                # Set proper permissions for global preset file (read/write for all)
+                chmod 666 "$global_preset"
+                log_message "Created global ReShadePreset.ini template with proper permissions"
+            fi
         fi
     fi
 }

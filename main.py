@@ -1169,6 +1169,10 @@ class Plugin:
             shutil.copy2(reshade_dll_src, reshade_dll_dst)
             shutil.copy2(d3dcompiler_src, d3dcompiler_dst)
             
+            # Set proper permissions for DLL files (read/write for all)
+            os.chmod(reshade_dll_dst, 0o666)
+            os.chmod(d3dcompiler_dst, 0o666)
+            
             # Copy shader directory if exists
             if os.path.exists(os.path.join(self.main_path, "ReShade_shaders")):
                 shaders_dst = os.path.join(exe_dir, "ReShade_shaders")
@@ -1212,9 +1216,13 @@ class Plugin:
                 # Update the PresetPath to use the local directory
                 ini_content = re.sub(r'PresetPath=.*', r'PresetPath=.', ini_content)
                 
-                # Write the modified ini file
+                # Write the modified ini file with proper permissions
                 with open(reshade_ini_dst, 'w', encoding='utf-8') as f:
                     f.write(ini_content)
+                
+                # Set proper permissions for ReShade.ini (read/write for all)
+                os.chmod(reshade_ini_dst, 0o666)
+                
             else:
                 # If no ReShade.ini exists, create a basic one
                 with open(reshade_ini_dst, 'w', encoding='utf-8') as f:
@@ -1232,7 +1240,39 @@ class Plugin:
     KeyNextPreset=0
     KeyPreviousPreset=0
     """)
+                # Set proper permissions (read/write for all)
+                os.chmod(reshade_ini_dst, 0o666)
+            
+            # Handle ReShadePreset.ini - preserve existing user settings
+            reshade_preset_dst = os.path.join(exe_dir, "ReShadePreset.ini")
+            
+            # Only create the file if it doesn't already exist (preserve existing user settings)
+            if not os.path.exists(reshade_preset_dst):
+                with open(reshade_preset_dst, 'w', encoding='utf-8') as f:
+                    f.write(f"""# ReShade Preset Configuration for {os.path.basename(game_path)}
+    # This file will be automatically populated when you save presets in ReShade
+    # Press HOME key in-game to open ReShade overlay
+    # Go to Settings -> General -> "Reload all shaders" if shaders don't appear
+
+    # Example preset configuration:
+    # [Preset1]
+    # Techniques=SMAA,Clarity,LumaSharpen
+    # PreprocessorDefinitions=
+
+    # Uncomment and modify the lines below to create a default preset:
+    # [Default]
+    # Techniques=
+    # PreprocessorDefinitions=
+    """)
                 
+                # Set proper permissions for ReShadePreset.ini (read/write for all)
+                os.chmod(reshade_preset_dst, 0o666)
+                decky.logger.info("Created new ReShadePreset.ini with proper permissions")
+            else:
+                # File exists, just ensure it has proper permissions
+                os.chmod(reshade_preset_dst, 0o666)
+                decky.logger.info("ReShadePreset.ini already exists, updated permissions only")
+            
             # Create a README file to help users with the configuration
             readme_path = os.path.join(exe_dir, "ReShade_README.txt")
             with open(readme_path, 'w', encoding='utf-8') as f:
@@ -1254,7 +1294,19 @@ class Plugin:
     5. If not, update them to: ".\\ReShade_shaders"
 
     Shader preset files (.ini) will be saved in this game directory.
+
+    Files created:
+    - ReShade.ini: Main ReShade configuration
+    - ReShadePreset.ini: Preset configurations (auto-populated when you save presets)
+    - {dll_override}.dll: ReShade DLL
+    - d3dcompiler_47.dll: DirectX shader compiler
+    - ReShade_shaders/: Shader files directory
+
+    Note: If ReShadePreset.ini already existed, your previous settings were preserved.
     """)
+            
+            # Set proper permissions for README (read/write for all)
+            os.chmod(readme_path, 0o666)
                 
             return {"status": "success", "output": f"ReShade installed successfully for Heroic game using {dll_override} override."}
         except Exception as e:
@@ -1583,7 +1635,7 @@ class Plugin:
         raise ValueError(f"Could not find installation directory for AppID: {appid}")
 
     async def uninstall_reshade_for_heroic_game(self, game_path: str) -> dict:
-        """Uninstall ReShade from a Heroic game"""
+        """Uninstall ReShade from a Heroic game while preserving user presets"""
         try:
             decky.logger.info(f"Uninstalling ReShade from Heroic game at: {game_path}")
             
@@ -1593,11 +1645,12 @@ class Plugin:
                 decky.logger.warning(f"Could not find executable directory, using provided path: {game_path}")
                 exe_dir = game_path
             
-            # Remove ReShade files
+            # Remove ReShade files (excluding ReShadePreset.ini to preserve user settings)
             reshade_files = [
                 "d3d8.dll", "d3d9.dll", "d3d10.dll", "d3d11.dll", "d3d12.dll", 
                 "dxgi.dll", "opengl32.dll", "dinput8.dll", "ddraw.dll",
                 "d3dcompiler_47.dll", "ReShade.ini", "ReShade_README.txt"
+                # Note: ReShadePreset.ini is intentionally excluded to preserve user settings
             ]
             
             for file in reshade_files:
@@ -1615,7 +1668,14 @@ class Plugin:
                     shutil.rmtree(shaders_path)
                 decky.logger.info(f"Removed {shaders_path}")
             
-            return {"status": "success", "output": "ReShade uninstalled successfully."}
+            # Check if ReShadePreset.ini exists and inform user it's preserved
+            preset_path = os.path.join(exe_dir, "ReShadePreset.ini")
+            if os.path.exists(preset_path):
+                decky.logger.info(f"ReShadePreset.ini preserved at {preset_path}")
+                return {"status": "success", "output": "ReShade uninstalled successfully.\nYour shader presets (ReShadePreset.ini) have been preserved for future use."}
+            else:
+                return {"status": "success", "output": "ReShade uninstalled successfully."}
+                
         except Exception as e:
             decky.logger.error(f"Error uninstalling ReShade: {str(e)}")
             return {"status": "error", "message": str(e)}

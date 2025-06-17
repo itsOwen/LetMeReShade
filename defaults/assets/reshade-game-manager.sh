@@ -110,34 +110,6 @@ setup_game_reshade() {
         return 1
     fi
     
-    # NEW: Copy AutoHDR addon files if available (addons can't be symlinked)
-    if [ -f "$RESHADE_PATH/latest/addon_version" ]; then
-        log_message "ReShade has addon support, checking for AutoHDR components"
-        
-        # Copy AutoHDR addon files if they exist
-        if [ -f "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon$arch" ]; then
-            log_message "Copying AutoHDR addon files to game directory"
-            cp "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon$arch" "$game_path/" || {
-                log_message "Warning: Failed to copy AutoHDR addon file"
-            }
-            
-            # Also copy the other architecture if present (some games may need both)
-            if [[ "$arch" == "64" && -f "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon32" ]]; then
-                cp "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon32" "$game_path/" || {
-                    log_message "Warning: Failed to copy AutoHDR.addon32"
-                }
-            elif [[ "$arch" == "32" && -f "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon64" ]]; then
-                cp "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon64" "$game_path/" || {
-                    log_message "Warning: Failed to copy AutoHDR.addon64"
-                }
-            fi
-        else
-            log_message "AutoHDR addon files not found in storage directory"
-        fi
-    else
-        log_message "ReShade addon support not available, skipping AutoHDR addon installation"
-    fi
-    
     # Link shader directory
     if [ -d "$MAIN_PATH/ReShade_shaders" ]; then
         log_message "Linking shader directory"
@@ -158,6 +130,80 @@ setup_game_reshade() {
         fi
     fi
     
+    # Handle ReShadePreset.ini - preserve existing user settings
+    log_message "Handling ReShadePreset.ini"
+    local preset_file="$game_path/ReShadePreset.ini"
+    
+    # Only create the file if it doesn't already exist (preserve existing user settings)
+    if [ ! -f "$preset_file" ]; then
+        cat > "$preset_file" << EOF
+# ReShade Preset Configuration for $(basename "$game_path")
+# This file will be automatically populated when you save presets in ReShade
+# Press HOME key in-game to open ReShade overlay
+# Go to Settings -> General -> "Reload all shaders" if shaders don't appear
+
+# Example preset configuration:
+# [Preset1]
+# Techniques=SMAA,Clarity,LumaSharpen
+# PreprocessorDefinitions=
+
+# Uncomment and modify the lines below to create a default preset:
+# [Default]
+# Techniques=
+# PreprocessorDefinitions=
+EOF
+        
+        # Set proper permissions (read/write for all)
+        chmod 666 "$preset_file"
+        log_message "Created new ReShadePreset.ini with proper permissions"
+    else
+        # File exists, just ensure it has proper permissions
+        chmod 666 "$preset_file"
+        log_message "ReShadePreset.ini already exists, updated permissions only"
+    fi
+    
+    # Ensure ReShade.ini has proper permissions if it exists
+    if [ -f "$game_path/ReShade.ini" ]; then
+        chmod 666 "$game_path/ReShade.ini"
+        log_message "Set proper permissions for ReShade.ini"
+    fi
+    
+    # Create README file for Steam games
+    local readme_file="$game_path/ReShade_README.txt"
+    cat > "$readme_file" << EOF
+ReShade for $(basename "$game_path")
+------------------------------------
+Installed with LetMeReShade plugin for Steam
+
+DLL Override: $dll_override
+Architecture: $arch-bit
+Game Directory: $game_path
+
+Press HOME key in-game to open the ReShade overlay.
+
+If shaders are not visible:
+1. Open the ReShade overlay with HOME key
+2. Go to Settings tab
+3. Check paths for "Effect Search Paths" and "Texture Search Paths"
+4. They should point to the ReShade_shaders folder in this game directory
+5. If not, update them to: ".\\ReShade_shaders"
+
+Shader preset files (.ini) will be saved in this game directory.
+
+Files created:
+- ReShade.ini: Main ReShade configuration (symlinked to global)
+- ReShadePreset.ini: Preset configurations (auto-populated when you save presets)
+- $dll_override.dll: ReShade DLL (symlinked)
+- d3dcompiler_47.dll: DirectX shader compiler (symlinked)
+- ReShade_shaders/: Shader files directory (symlinked)
+
+Note: If ReShadePreset.ini already existed, your previous settings were preserved.
+EOF
+    
+    # Set proper permissions for README (read/write for all)
+    chmod 666 "$readme_file"
+    log_message "Created ReShade_README.txt with proper permissions"
+    
     log_message "Setup completed successfully"
     return 0
 }
@@ -166,41 +212,56 @@ remove_game_reshade() {
     local game_path="$1"
     
     log_message "Removing ReShade from: $game_path"
+    log_message "Current files in game directory:"
+    ls -la "$game_path" >&2
     
-    # Remove DLL overrides
+    # Remove all potential ReShade links
     for override in $COMMON_OVERRIDES; do
-        if [ -L "$game_path/${override}.dll" ]; then
+        if [[ -L "$game_path/${override}.dll" ]]; then
             log_message "Removing link: ${override}.dll"
             rm -fv "$game_path/${override}.dll"
         fi
     done
     
-    # NEW: Remove AutoHDR addon files
-    if [ -f "$game_path/AutoHDR.addon32" ]; then
-        log_message "Removing AutoHDR.addon32"
-        rm -fv "$game_path/AutoHDR.addon32"
-    fi
+    # Remove ReShade files (excluding ReShadePreset.ini to preserve user settings)
+    local extras=("ReShade.ini" "ReShade32.json" "ReShade64.json" 
+                 "d3dcompiler_47.dll" "ReShade_shaders" "ReShade_README.txt")
+    # Note: ReShadePreset.ini is intentionally excluded to preserve user settings
     
-    if [ -f "$game_path/AutoHDR.addon64" ]; then
-        log_message "Removing AutoHDR.addon64"
-        rm -fv "$game_path/AutoHDR.addon64"
-    fi
-    
-    # Remove other ReShade files
-    local reshade_files="ReShade.ini ReShade32.json ReShade64.json d3dcompiler_47.dll ReShade_shaders ReShadePreset.ini"
-    
-    for file in $reshade_files; do
-        if [ -L "$game_path/$file" ]; then
-            log_message "Removing link: $file"
-            rm -fv "$game_path/$file"
+    for extra in "${extras[@]}"; do
+        if [[ -L "$game_path/$extra" ]]; then
+            log_message "Removing link: $extra"
+            rm -fv "$game_path/$extra"
+        elif [[ -f "$game_path/$extra" ]]; then
+            log_message "Removing file: $extra"
+            rm -fv "$game_path/$extra"
         fi
     done
-
-    if [ "$DELETE_RESHADE_FILES" = "1" ]; then
-        log_message "Removing additional ReShade files"
-        rm -f "$game_path/ReShade.log" "$game_path/ReShadePreset.ini"
+    
+    # Always remove ReShade.log as it's just a log file
+    if [[ -f "$game_path/ReShade.log" ]]; then
+        log_message "Removing ReShade.log"
+        rm -f "$game_path/ReShade.log"
     fi
     
+    # Check if ReShadePreset.ini exists and inform user it's preserved
+    if [[ -f "$game_path/ReShadePreset.ini" ]]; then
+        log_message "ReShadePreset.ini preserved to keep user shader presets"
+        echo "ReShade uninstalled successfully. Your shader presets (ReShadePreset.ini) have been preserved."
+    else
+        echo "ReShade uninstalled successfully."
+    fi
+    
+    if [ "$DELETE_RESHADE_FILES" = "1" ]; then
+        log_message "DELETE_RESHADE_FILES is enabled, but ReShadePreset.ini will still be preserved"
+        # Remove any additional preset files except ReShadePreset.ini
+        find "$game_path" -name "*.ini" -type f ! -name "ReShadePreset.ini" -exec grep -l "ReShade" {} \; 2>/dev/null | while read -r preset_file; do
+            log_message "Removing additional ReShade config file: $preset_file"
+            rm -f "$preset_file"
+        done
+    fi
+    
+    log_message "Removal completed - ReShadePreset.ini preserved"
     return 0
 }
 
