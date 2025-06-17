@@ -130,6 +130,17 @@ setup_game_reshade() {
         fi
     fi
     
+    # Copy AutoHDR addon files if available
+    local autohdr_addon="$MAIN_PATH/AutoHDR_addons/AutoHDR.addon${arch}"
+    if [ -f "$autohdr_addon" ]; then
+        log_message "Copying AutoHDR addon for ${arch}-bit architecture"
+        if cp "$autohdr_addon" "$game_path/AutoHDR.addon${arch}"; then
+            log_message "AutoHDR addon copied successfully"
+        else
+            log_message "Warning: Failed to copy AutoHDR addon"
+        fi
+    fi
+    
     # Handle ReShadePreset.ini - preserve existing user settings
     log_message "Handling ReShadePreset.ini"
     local preset_file="$game_path/ReShadePreset.ini"
@@ -196,6 +207,7 @@ Files created:
 - $dll_override.dll: ReShade DLL (symlinked)
 - d3dcompiler_47.dll: DirectX shader compiler (symlinked)
 - ReShade_shaders/: Shader files directory (symlinked)
+- AutoHDR.addon$arch: AutoHDR addon (if available)
 
 Note: If ReShadePreset.ini already existed, your previous settings were preserved.
 EOF
@@ -225,7 +237,8 @@ remove_game_reshade() {
     
     # Remove ReShade files (excluding ReShadePreset.ini to preserve user settings)
     local extras=("ReShade.ini" "ReShade32.json" "ReShade64.json" 
-                 "d3dcompiler_47.dll" "ReShade_shaders" "ReShade_README.txt")
+                 "d3dcompiler_47.dll" "ReShade_shaders" "ReShade_README.txt"
+                 "AutoHDR.addon32" "AutoHDR.addon64")
     # Note: ReShadePreset.ini is intentionally excluded to preserve user settings
     
     for extra in "${extras[@]}"; do

@@ -1301,12 +1301,24 @@ class Plugin:
     - {dll_override}.dll: ReShade DLL
     - d3dcompiler_47.dll: DirectX shader compiler
     - ReShade_shaders/: Shader files directory
+    - AutoHDR.addon{arch}: AutoHDR addon (if available)
 
     Note: If ReShadePreset.ini already existed, your previous settings were preserved.
     """)
             
             # Set proper permissions for README (read/write for all)
             os.chmod(readme_path, 0o666)
+            
+            # Copy AutoHDR addon files if available
+            autohdr_addon_path = os.path.join(self.main_path, "AutoHDR_addons", f"AutoHDR.addon{arch}")
+            if os.path.exists(autohdr_addon_path):
+                autohdr_dst = os.path.join(exe_dir, f"AutoHDR.addon{arch}")
+                try:
+                    shutil.copy2(autohdr_addon_path, autohdr_dst)
+                    os.chmod(autohdr_dst, 0o666)
+                    decky.logger.info(f"AutoHDR addon copied successfully for {arch}-bit architecture")
+                except Exception as e:
+                    decky.logger.warning(f"Failed to copy AutoHDR addon: {str(e)}")
                 
             return {"status": "success", "output": f"ReShade installed successfully for Heroic game using {dll_override} override."}
         except Exception as e:
@@ -1649,7 +1661,8 @@ class Plugin:
             reshade_files = [
                 "d3d8.dll", "d3d9.dll", "d3d10.dll", "d3d11.dll", "d3d12.dll", 
                 "dxgi.dll", "opengl32.dll", "dinput8.dll", "ddraw.dll",
-                "d3dcompiler_47.dll", "ReShade.ini", "ReShade_README.txt"
+                "d3dcompiler_47.dll", "ReShade.ini", "ReShade_README.txt",
+                "AutoHDR.addon32", "AutoHDR.addon64"
                 # Note: ReShadePreset.ini is intentionally excluded to preserve user settings
             ]
             
