@@ -63,19 +63,29 @@ class Plugin:
     async def save_shader_preferences(self, selected_shaders: list) -> dict:
         """Save user's shader preferences to a file"""
         try:
-            preferences_file = os.path.join(self.main_path, "shader_preferences.json")
+            preferences_file = os.path.join(self.main_path, "user_preferences.json")
             
-            preferences = {
+            # Load existing preferences to preserve other settings
+            existing_preferences = {}
+            if os.path.exists(preferences_file):
+                try:
+                    with open(preferences_file, 'r') as f:
+                        existing_preferences = json.load(f)
+                except:
+                    pass  # If file is corrupted, start fresh
+            
+            # Update shader preferences while preserving other settings
+            existing_preferences.update({
                 "selected_shaders": selected_shaders,
                 "last_updated": int(time.time()),
-                "version": "1.0"
-            }
+                "version": "1.1"
+            })
             
             # Ensure directory exists
             os.makedirs(self.main_path, exist_ok=True)
             
             with open(preferences_file, 'w') as f:
-                json.dump(preferences, f, indent=2)
+                json.dump(existing_preferences, f, indent=2)
             
             decky.logger.info(f"Saved shader preferences: {selected_shaders}")
             return {"status": "success", "message": "Shader preferences saved successfully"}
@@ -87,13 +97,38 @@ class Plugin:
     async def load_shader_preferences(self) -> dict:
         """Load user's shader preferences from file"""
         try:
-            preferences_file = os.path.join(self.main_path, "shader_preferences.json")
+            preferences_file = os.path.join(self.main_path, "user_preferences.json")
             
-            if not os.path.exists(preferences_file):
+            # Also check old file for migration
+            old_preferences_file = os.path.join(self.main_path, "shader_preferences.json")
+            
+            preferences = None
+            
+            # Try to load from new file first
+            if os.path.exists(preferences_file):
+                with open(preferences_file, 'r') as f:
+                    preferences = json.load(f)
+            # Migrate from old file if exists
+            elif os.path.exists(old_preferences_file):
+                with open(old_preferences_file, 'r') as f:
+                    old_prefs = json.load(f)
+                    # Migrate to new format
+                    preferences = {
+                        "selected_shaders": old_prefs.get("selected_shaders", []),
+                        "last_updated": old_prefs.get("last_updated", int(time.time())),
+                        "version": "1.1",
+                        "autohdr_enabled": False  # Default for migrated preferences
+                    }
+                    # Save in new format and remove old file
+                    with open(preferences_file, 'w') as f:
+                        json.dump(preferences, f, indent=2)
+                    try:
+                        os.remove(old_preferences_file)
+                    except:
+                        pass
+            
+            if not preferences:
                 return {"status": "success", "preferences": None, "message": "No preferences file found"}
-            
-            with open(preferences_file, 'r') as f:
-                preferences = json.load(f)
             
             # Validate the preferences structure
             if "selected_shaders" not in preferences:
@@ -113,8 +148,10 @@ class Plugin:
     async def has_shader_preferences(self) -> dict:
         """Check if user has saved shader preferences"""
         try:
-            preferences_file = os.path.join(self.main_path, "shader_preferences.json")
-            exists = os.path.exists(preferences_file)
+            preferences_file = os.path.join(self.main_path, "user_preferences.json")
+            old_preferences_file = os.path.join(self.main_path, "shader_preferences.json")
+            
+            exists = os.path.exists(preferences_file) or os.path.exists(old_preferences_file)
             
             if exists:
                 # Also load and return a summary
@@ -132,6 +169,123 @@ class Plugin:
             
         except Exception as e:
             decky.logger.error(f"Error checking shader preferences: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    async def save_autohdr_preference(self, autohdr_enabled: bool) -> dict:
+        """Save user's AutoHDR preference"""
+        try:
+            preferences_file = os.path.join(self.main_path, "user_preferences.json")
+            
+            # Load existing preferences to preserve other settings
+            existing_preferences = {}
+            if os.path.exists(preferences_file):
+                try:
+                    with open(preferences_file, 'r') as f:
+                        existing_preferences = json.load(f)
+                except:
+                    pass  # If file is corrupted, start fresh
+            
+            # Update AutoHDR preference while preserving other settings
+            existing_preferences.update({
+                "autohdr_enabled": autohdr_enabled,
+                "last_updated": int(time.time()),
+                "version": "1.1"
+            })
+            
+            # Ensure selected_shaders exists if it doesn't
+            if "selected_shaders" not in existing_preferences:
+                existing_preferences["selected_shaders"] = []
+            
+            # Ensure directory exists
+            os.makedirs(self.main_path, exist_ok=True)
+            
+            with open(preferences_file, 'w') as f:
+                json.dump(existing_preferences, f, indent=2)
+            
+            decky.logger.info(f"Saved AutoHDR preference: {autohdr_enabled}")
+            return {"status": "success", "message": "AutoHDR preference saved successfully"}
+            
+        except Exception as e:
+            decky.logger.error(f"Error saving AutoHDR preference: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    async def load_autohdr_preference(self) -> dict:
+        """Load user's AutoHDR preference"""
+        try:
+            preferences_file = os.path.join(self.main_path, "user_preferences.json")
+            
+            if not os.path.exists(preferences_file):
+                return {"status": "success", "autohdr_enabled": False, "message": "No preferences file found"}
+            
+            with open(preferences_file, 'r') as f:
+                preferences = json.load(f)
+            
+            autohdr_enabled = preferences.get("autohdr_enabled", False)
+            
+            decky.logger.info(f"Loaded AutoHDR preference: {autohdr_enabled}")
+            return {
+                "status": "success", 
+                "autohdr_enabled": autohdr_enabled
+            }
+            
+        except Exception as e:
+            decky.logger.error(f"Error loading AutoHDR preference: {str(e)}")
+            return {"status": "error", "message": str(e), "autohdr_enabled": False}
+
+    async def save_installed_configuration(self, with_addon: bool, version: str, with_autohdr: bool, selected_shaders: list) -> dict:
+        """Save the configuration that was actually installed"""
+        try:
+            config_file = os.path.join(self.main_path, "installed_config.json")
+            
+            installed_config = {
+                "with_addon": with_addon,
+                "version": version,
+                "with_autohdr": with_autohdr,
+                "selected_shaders": selected_shaders or [],
+                "installed_at": int(time.time())
+            }
+            
+            os.makedirs(self.main_path, exist_ok=True)
+            
+            with open(config_file, 'w') as f:
+                json.dump(installed_config, f, indent=2)
+            
+            decky.logger.info(f"Saved installed configuration: {installed_config}")
+            return {"status": "success"}
+            
+        except Exception as e:
+            decky.logger.error(f"Error saving installed configuration: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    async def load_installed_configuration(self) -> dict:
+        """Load the configuration that was actually installed"""
+        try:
+            config_file = os.path.join(self.main_path, "installed_config.json")
+            
+            if not os.path.exists(config_file):
+                return {"status": "success", "config": None}
+            
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+            
+            return {"status": "success", "config": config}
+            
+        except Exception as e:
+            decky.logger.error(f"Error loading installed configuration: {str(e)}")
+            return {"status": "error", "message": str(e), "config": None}
+
+    async def clear_installed_configuration(self) -> dict:
+        """Clear the installed configuration (called on uninstall)"""
+        try:
+            config_file = os.path.join(self.main_path, "installed_config.json")
+            
+            if os.path.exists(config_file):
+                os.remove(config_file)
+            
+            return {"status": "success"}
+            
+        except Exception as e:
+            decky.logger.error(f"Error clearing installed configuration: {str(e)}")
             return {"status": "error", "message": str(e)}
 
     async def get_available_shaders(self) -> dict:
@@ -440,6 +594,9 @@ class Plugin:
 
             marker_file.touch()
 
+            # Save the installed configuration
+            await self.save_installed_configuration(with_addon, version, with_autohdr, selected_shaders)
+
             # Create success message
             version_display = f"ReShade {version.title()}"
             if with_addon:
@@ -512,6 +669,9 @@ class Plugin:
                 marker_file.unlink()
             if addon_marker.exists():
                 addon_marker.unlink()
+
+            # Clear installed configuration
+            await self.clear_installed_configuration()
                 
             return {"status": "success", "output": "ReShade uninstalled"}
         except Exception as e:
