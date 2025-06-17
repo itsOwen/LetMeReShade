@@ -22,12 +22,17 @@ remove_game_reshade() {
         fi
     done
     
+    # Remove ReShade files (excluding ReShadePreset.ini to preserve user settings)
     local extras=("ReShade.ini" "ReShade32.json" "ReShade64.json" 
-                 "d3dcompiler_47.dll" "ReShade_shaders" "ReShadePreset.ini")
+                 "d3dcompiler_47.dll" "ReShade_shaders" "ReShade_README.txt")
+    # Note: ReShadePreset.ini is intentionally excluded to preserve user settings
     
     for extra in "${extras[@]}"; do
         if [[ -L "$game_path/$extra" ]]; then
             log_message "Removing link: $extra"
+            rm -fv "$game_path/$extra"
+        elif [[ -f "$game_path/$extra" ]]; then
+            log_message "Removing file: $extra"
             rm -fv "$game_path/$extra"
         fi
     done
@@ -37,7 +42,12 @@ remove_game_reshade() {
         rm -f "$game_path/ReShade.log"
     fi
     
-    log_message "Removal completed"
+    # Check if ReShadePreset.ini exists and inform user it's preserved
+    if [[ -f "$game_path/ReShadePreset.ini" ]]; then
+        log_message "ReShadePreset.ini preserved to keep user shader presets"
+    fi
+    
+    log_message "Removal completed - ReShadePreset.ini preserved if it existed"
     return 0
 }
 
@@ -48,9 +58,14 @@ main() {
             echo "ReShade is not installed"
             exit 0
         fi
+        
+        # Before removing the global installation, inform about preserved presets
         echo "Removing ReShade installation..."
+        echo "Note: Any ReShadePreset.ini files in game directories will be preserved."
+        
         rm -rf "$RESHADE_PATH"
         echo "ReShade uninstalled successfully"
+        echo "Individual game ReShadePreset.ini files have been preserved to maintain your shader configurations."
     else
         # Game-specific uninstall
         local game_path="$1"
@@ -60,6 +75,9 @@ main() {
         fi
         remove_game_reshade "$game_path"
         echo "ReShade removed from game directory"
+        if [[ -f "$game_path/ReShadePreset.ini" ]]; then
+            echo "Your shader presets (ReShadePreset.ini) have been preserved."
+        fi
     fi
 }
 

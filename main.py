@@ -6,6 +6,7 @@ from pathlib import Path
 import json
 import glob
 import re
+import time
 
 class Plugin:
     def __init__(self):
@@ -18,7 +19,8 @@ class Plugin:
             'DELETE_RESHADE_FILES': '0',
             'FORCE_RESHADE_UPDATE_CHECK': '0',
             'RESHADE_ADDON_SUPPORT': '0',
-            'RESHADE_VERSION': 'latest'  
+            'RESHADE_VERSION': 'latest',
+            'AUTOHDR_ENABLED': '0'
         }
         # Separate base paths for ReShade and VkBasalt
         self.main_path = os.path.join(self.environment['XDG_DATA_HOME'], 'reshade')
@@ -58,6 +60,433 @@ class Plugin:
     async def _unload(self):
         decky.logger.info("ReShade plugin unloaded")
 
+    async def save_shader_preferences(self, selected_shaders: list) -> dict:
+        """Save user's shader preferences to a file"""
+        try:
+            preferences_file = os.path.join(self.main_path, "user_preferences.json")
+            
+            # Load existing preferences to preserve other settings
+            existing_preferences = {}
+            if os.path.exists(preferences_file):
+                try:
+                    with open(preferences_file, 'r') as f:
+                        existing_preferences = json.load(f)
+                except:
+                    pass  # If file is corrupted, start fresh
+            
+            # Update shader preferences while preserving other settings
+            existing_preferences.update({
+                "selected_shaders": selected_shaders,
+                "last_updated": int(time.time()),
+                "version": "1.1"
+            })
+            
+            # Ensure directory exists
+            os.makedirs(self.main_path, exist_ok=True)
+            
+            with open(preferences_file, 'w') as f:
+                json.dump(existing_preferences, f, indent=2)
+            
+            decky.logger.info(f"Saved shader preferences: {selected_shaders}")
+            return {"status": "success", "message": "Shader preferences saved successfully"}
+            
+        except Exception as e:
+            decky.logger.error(f"Error saving shader preferences: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    async def load_shader_preferences(self) -> dict:
+        """Load user's shader preferences from file"""
+        try:
+            preferences_file = os.path.join(self.main_path, "user_preferences.json")
+            
+            # Also check old file for migration
+            old_preferences_file = os.path.join(self.main_path, "shader_preferences.json")
+            
+            preferences = None
+            
+            # Try to load from new file first
+            if os.path.exists(preferences_file):
+                with open(preferences_file, 'r') as f:
+                    preferences = json.load(f)
+            # Migrate from old file if exists
+            elif os.path.exists(old_preferences_file):
+                with open(old_preferences_file, 'r') as f:
+                    old_prefs = json.load(f)
+                    # Migrate to new format
+                    preferences = {
+                        "selected_shaders": old_prefs.get("selected_shaders", []),
+                        "last_updated": old_prefs.get("last_updated", int(time.time())),
+                        "version": "1.1",
+                        "autohdr_enabled": False  # Default for migrated preferences
+                    }
+                    # Save in new format and remove old file
+                    with open(preferences_file, 'w') as f:
+                        json.dump(preferences, f, indent=2)
+                    try:
+                        os.remove(old_preferences_file)
+                    except:
+                        pass
+            
+            if not preferences:
+                return {"status": "success", "preferences": None, "message": "No preferences file found"}
+            
+            # Validate the preferences structure
+            if "selected_shaders" not in preferences:
+                return {"status": "error", "message": "Invalid preferences file format"}
+            
+            decky.logger.info(f"Loaded shader preferences: {preferences['selected_shaders']}")
+            return {
+                "status": "success", 
+                "preferences": preferences,
+                "selected_shaders": preferences["selected_shaders"]
+            }
+            
+        except Exception as e:
+            decky.logger.error(f"Error loading shader preferences: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    async def has_shader_preferences(self) -> dict:
+        """Check if user has saved shader preferences"""
+        try:
+            preferences_file = os.path.join(self.main_path, "user_preferences.json")
+            old_preferences_file = os.path.join(self.main_path, "shader_preferences.json")
+            
+            exists = os.path.exists(preferences_file) or os.path.exists(old_preferences_file)
+            
+            if exists:
+                # Also load and return a summary
+                result = await self.load_shader_preferences()
+                if result["status"] == "success" and result["preferences"]:
+                    shader_count = len(result["selected_shaders"])
+                    return {
+                        "status": "success",
+                        "has_preferences": True,
+                        "shader_count": shader_count,
+                        "last_updated": result["preferences"].get("last_updated", 0)
+                    }
+            
+            return {"status": "success", "has_preferences": False}
+            
+        except Exception as e:
+            decky.logger.error(f"Error checking shader preferences: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    async def save_autohdr_preference(self, autohdr_enabled: bool) -> dict:
+        """Save user's AutoHDR preference"""
+        try:
+            preferences_file = os.path.join(self.main_path, "user_preferences.json")
+            
+            # Load existing preferences to preserve other settings
+            existing_preferences = {}
+            if os.path.exists(preferences_file):
+                try:
+                    with open(preferences_file, 'r') as f:
+                        existing_preferences = json.load(f)
+                except:
+                    pass  # If file is corrupted, start fresh
+            
+            # Update AutoHDR preference while preserving other settings
+            existing_preferences.update({
+                "autohdr_enabled": autohdr_enabled,
+                "last_updated": int(time.time()),
+                "version": "1.1"
+            })
+            
+            # Ensure selected_shaders exists if it doesn't
+            if "selected_shaders" not in existing_preferences:
+                existing_preferences["selected_shaders"] = []
+            
+            # Ensure directory exists
+            os.makedirs(self.main_path, exist_ok=True)
+            
+            with open(preferences_file, 'w') as f:
+                json.dump(existing_preferences, f, indent=2)
+            
+            decky.logger.info(f"Saved AutoHDR preference: {autohdr_enabled}")
+            return {"status": "success", "message": "AutoHDR preference saved successfully"}
+            
+        except Exception as e:
+            decky.logger.error(f"Error saving AutoHDR preference: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    async def load_autohdr_preference(self) -> dict:
+        """Load user's AutoHDR preference"""
+        try:
+            preferences_file = os.path.join(self.main_path, "user_preferences.json")
+            
+            if not os.path.exists(preferences_file):
+                return {"status": "success", "autohdr_enabled": False, "message": "No preferences file found"}
+            
+            with open(preferences_file, 'r') as f:
+                preferences = json.load(f)
+            
+            autohdr_enabled = preferences.get("autohdr_enabled", False)
+            
+            decky.logger.info(f"Loaded AutoHDR preference: {autohdr_enabled}")
+            return {
+                "status": "success", 
+                "autohdr_enabled": autohdr_enabled
+            }
+            
+        except Exception as e:
+            decky.logger.error(f"Error loading AutoHDR preference: {str(e)}")
+            return {"status": "error", "message": str(e), "autohdr_enabled": False}
+
+    async def save_installed_configuration(self, with_addon: bool, version: str, with_autohdr: bool, selected_shaders: list) -> dict:
+        """Save the configuration that was actually installed"""
+        try:
+            config_file = os.path.join(self.main_path, "installed_config.json")
+            
+            installed_config = {
+                "with_addon": with_addon,
+                "version": version,
+                "with_autohdr": with_autohdr,
+                "selected_shaders": selected_shaders or [],
+                "installed_at": int(time.time())
+            }
+            
+            os.makedirs(self.main_path, exist_ok=True)
+            
+            with open(config_file, 'w') as f:
+                json.dump(installed_config, f, indent=2)
+            
+            decky.logger.info(f"Saved installed configuration: {installed_config}")
+            return {"status": "success"}
+            
+        except Exception as e:
+            decky.logger.error(f"Error saving installed configuration: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    async def load_installed_configuration(self) -> dict:
+        """Load the configuration that was actually installed"""
+        try:
+            config_file = os.path.join(self.main_path, "installed_config.json")
+            
+            if not os.path.exists(config_file):
+                return {"status": "success", "config": None}
+            
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+            
+            return {"status": "success", "config": config}
+            
+        except Exception as e:
+            decky.logger.error(f"Error loading installed configuration: {str(e)}")
+            return {"status": "error", "message": str(e), "config": None}
+
+    async def clear_installed_configuration(self) -> dict:
+        """Clear the installed configuration (called on uninstall)"""
+        try:
+            config_file = os.path.join(self.main_path, "installed_config.json")
+            
+            if os.path.exists(config_file):
+                os.remove(config_file)
+            
+            return {"status": "success"}
+            
+        except Exception as e:
+            decky.logger.error(f"Error clearing installed configuration: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    async def get_available_shaders(self) -> dict:
+        """Get list of available shader packages for selection"""
+        try:
+            # Get the bin directory path
+            plugin_dir = Path(decky.DECKY_PLUGIN_DIR)
+            
+            # Check both possible locations for bin directory
+            defaults_bin = plugin_dir / "defaults" / "bin"
+            assets_bin = plugin_dir / "bin"
+            
+            bin_path = None
+            if defaults_bin.exists():
+                bin_path = defaults_bin
+            elif assets_bin.exists():
+                bin_path = assets_bin
+            else:
+                return {"status": "error", "message": "Bin directory not found"}
+
+            # Define available shader packages with descriptions
+            shader_packages = [
+                {
+                    "id": "reshade_shaders",
+                    "name": "ReShade Community Shaders",
+                    "description": "Official ReShade community shader collection",
+                    "file": "reshade_shaders.tar.gz",
+                    "size_mb": "~15MB",
+                    "enabled": True
+                },
+                {
+                    "id": "sweetfx_shaders", 
+                    "name": "SweetFX Shaders",
+                    "description": "Popular SweetFX shader effects collection",
+                    "file": "sweetfx_shaders.tar.gz",
+                    "size_mb": "~8MB",
+                    "enabled": True
+                },
+                {
+                    "id": "martymc_shaders",
+                    "name": "MartyMcFly's RT Shaders",
+                    "description": "High-quality ray tracing and lighting effects",
+                    "file": "martymc_shaders.tar.gz", 
+                    "size_mb": "~12MB",
+                    "enabled": True
+                },
+                {
+                    "id": "astrayfx_shaders",
+                    "name": "AstrayFX Shaders",
+                    "description": "Performance-focused shader collection",
+                    "file": "astrayfx_shaders.tar.gz",
+                    "size_mb": "~5MB", 
+                    "enabled": True
+                },
+                {
+                    "id": "prod80_shaders",
+                    "name": "Prod80's Shaders",
+                    "description": "Professional color grading and enhancement shaders",
+                    "file": "prod80_shaders.tar.gz",
+                    "size_mb": "~6MB",
+                    "enabled": True
+                },
+                {
+                    "id": "retroarch_shaders",
+                    "name": "RetroArch Shaders",
+                    "description": "Retro gaming and CRT emulation effects",
+                    "file": "retroarch_shaders.tar.gz",
+                    "size_mb": "~10MB",
+                    "enabled": True
+                }
+            ]
+
+            # Check which shader packages actually exist
+            available_shaders = []
+            for shader in shader_packages:
+                shader_file = bin_path / shader["file"]
+                if shader_file.exists():
+                    # Get actual file size
+                    file_size = shader_file.stat().st_size
+                    size_mb = round(file_size / (1024 * 1024), 1)
+                    shader["size_mb"] = f"{size_mb}MB"
+                    available_shaders.append(shader)
+                else:
+                    decky.logger.warning(f"Shader package not found: {shader_file}")
+
+            return {
+                "status": "success",
+                "shaders": available_shaders,
+                "total_count": len(available_shaders)
+            }
+
+        except Exception as e:
+            decky.logger.error(f"Error getting available shaders: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    async def detect_steam_deck_model(self) -> dict:
+        """Detect Steam Deck model (OLED vs LCD) using board name"""
+        try:
+            decky.logger.info("Detecting Steam Deck model...")
+            
+            # First check if we can read system info at all
+            is_steam_deck = False
+            product_name = ""
+            
+            try:
+                with open('/sys/devices/virtual/dmi/id/product_name', 'r') as f:
+                    product_name = f.read().strip()
+                decky.logger.info(f"DMI Product name: '{product_name}'")
+                
+                # More flexible Steam Deck detection
+                if any(term in product_name.lower() for term in ["steam deck", "steamdeck", "jupiter", "galileo"]):
+                    is_steam_deck = True
+                    decky.logger.info("Confirmed this is a Steam Deck")
+                else:
+                    decky.logger.warning(f"Product name '{product_name}' doesn't indicate Steam Deck")
+            except (FileNotFoundError, PermissionError) as e:
+                decky.logger.warning(f"Could not read DMI product name: {e}")
+            
+            # If we can't confirm it's a Steam Deck through product name, 
+            # let's assume it is and try board detection anyway
+            if not is_steam_deck:
+                decky.logger.info("Could not confirm Steam Deck via product name, proceeding with board detection")
+            
+            # Check board name - most reliable method for Steam Deck OLED vs LCD
+            board_name = ""
+            try:
+                with open('/sys/devices/virtual/dmi/id/board_name', 'r') as f:
+                    board_name = f.read().strip()
+                decky.logger.info(f"DMI Board name: '{board_name}'")
+                
+                # Check for OLED (Galileo)
+                if "Galileo" in board_name:
+                    decky.logger.info("Detected Steam Deck OLED (Galileo)")
+                    return {
+                        "status": "success",
+                        "model": "OLED",
+                        "is_oled": True
+                    }
+                # Check for LCD (Jupiter)
+                elif "Jupiter" in board_name:
+                    decky.logger.info("Detected Steam Deck LCD (Jupiter)")
+                    return {
+                        "status": "success",
+                        "model": "LCD",
+                        "is_oled": False
+                    }
+                else:
+                    decky.logger.warning(f"Unknown board name: '{board_name}'")
+                    
+                    # If we confirmed it's a Steam Deck but unknown board, default to LCD
+                    if is_steam_deck:
+                        decky.logger.info("Confirmed Steam Deck but unknown board, defaulting to LCD")
+                        return {
+                            "status": "success",
+                            "model": "LCD",
+                            "is_oled": False
+                        }
+                    
+            except (FileNotFoundError, PermissionError) as e:
+                decky.logger.warning(f"Could not read DMI board name: {e}")
+            
+            # Additional fallback checks for Steam Deck detection
+            try:
+                # Check system manufacturer
+                with open('/sys/devices/virtual/dmi/id/sys_vendor', 'r') as f:
+                    vendor = f.read().strip()
+                decky.logger.info(f"System vendor: '{vendor}'")
+                
+                if "Valve" in vendor:
+                    is_steam_deck = True
+                    decky.logger.info("Confirmed Steam Deck via vendor")
+            except (FileNotFoundError, PermissionError) as e:
+                decky.logger.debug(f"Could not read sys_vendor: {e}")
+            
+            # Final decision logic
+            if is_steam_deck:
+                # We know it's a Steam Deck but couldn't determine the model
+                decky.logger.info("Confirmed Steam Deck, but model detection failed - defaulting to LCD")
+                return {
+                    "status": "success",
+                    "model": "LCD", 
+                    "is_oled": False
+                }
+            else:
+                # We couldn't confirm this is a Steam Deck
+                decky.logger.info("Could not confirm this is a Steam Deck")
+                return {
+                    "status": "success",
+                    "model": "Not Steam Deck",
+                    "is_oled": False
+                }
+                
+        except Exception as e:
+            decky.logger.error(f"Error detecting Steam Deck model: {str(e)}")
+            return {
+                "status": "error", 
+                "message": str(e),
+                "model": "Unknown",
+                "is_oled": False
+            }
+
     async def check_reshade_path(self) -> dict:
         path = Path(os.path.expanduser("~/.local/share/reshade"))
         marker_file = path / ".installed"
@@ -89,7 +518,7 @@ class Plugin:
         marker_file = Path(self.vkbasalt_base_path) / ".installed"
         return {"exists": marker_file.exists()}
 
-    async def run_install_reshade(self, with_addon: bool = False, version: str = "latest") -> dict:
+    async def run_install_reshade(self, with_addon: bool = False, version: str = "latest", with_autohdr: bool = False, selected_shaders: list = None) -> dict:
         try:
             assets_dir = self._get_assets_dir()
             script_path = assets_dir / "reshade-install.sh"
@@ -101,9 +530,20 @@ class Plugin:
             # Create a new environment dictionary for this installation
             install_env = self.environment.copy()
             
-            # Explicitly set RESHADE_ADDON_SUPPORT and RESHADE_VERSION based on parameters
+            # Explicitly set RESHADE_ADDON_SUPPORT, RESHADE_VERSION, and AUTOHDR_ENABLED based on parameters
             install_env['RESHADE_ADDON_SUPPORT'] = '1' if with_addon else '0'
             install_env['RESHADE_VERSION'] = version
+            install_env['AUTOHDR_ENABLED'] = '1' if with_autohdr else '0'
+            
+            # Set selected shaders (if provided)
+            if selected_shaders is not None:
+                # Convert selected shaders list to comma-separated string
+                selected_shader_ids = ','.join(selected_shaders) if selected_shaders else ''
+                install_env['SELECTED_SHADERS'] = selected_shader_ids
+                decky.logger.info(f"Selected shader packages: {selected_shader_ids}")
+            else:
+                # Install all shaders (default behavior)
+                install_env['SELECTED_SHADERS'] = 'all'
             
             # Add other necessary environment variables
             install_env.update({
@@ -111,7 +551,15 @@ class Plugin:
                 'XDG_DATA_HOME': os.path.expandvars('$HOME/.local/share')
             })
 
-            decky.logger.info(f"Installing ReShade {version} with addon support: {with_addon}")
+            install_description = f"Installing ReShade {version}"
+            if with_addon:
+                install_description += " with addon support"
+            if with_autohdr:
+                install_description += " and AutoHDR components"
+            if selected_shaders and selected_shaders != ['all']:
+                install_description += f" with {len(selected_shaders)} shader packages"
+            
+            decky.logger.info(install_description)
             decky.logger.info(f"Environment: {install_env}")
 
             process = subprocess.run(
@@ -146,7 +594,18 @@ class Plugin:
 
             marker_file.touch()
 
-            version_display = f"ReShade {version.title()}" + (' (with Addon Support)' if with_addon else '')
+            # Save the installed configuration
+            await self.save_installed_configuration(with_addon, version, with_autohdr, selected_shaders)
+
+            # Create success message
+            version_display = f"ReShade {version.title()}"
+            if with_addon:
+                version_display += ' (with Addon Support)'
+            if with_autohdr:
+                version_display += ' and AutoHDR components'
+            if selected_shaders and selected_shaders != ['all']:
+                version_display += f' with {len(selected_shaders)} shader packages'
+            
             return {"status": "success", "output": f"{version_display} installed successfully!"}
         except Exception as e:
             decky.logger.error(f"Install error: {str(e)}")
@@ -210,6 +669,9 @@ class Plugin:
                 marker_file.unlink()
             if addon_marker.exists():
                 addon_marker.unlink()
+
+            # Clear installed configuration
+            await self.clear_installed_configuration()
                 
             return {"status": "success", "output": "ReShade uninstalled"}
         except Exception as e:
@@ -266,26 +728,24 @@ class Plugin:
             
             has_main_exe = len(main_exe_files) > 0
             
-            # Check 2: Look for Linux-specific files and directories
-            linux_indicators = [
-                # Common Linux executable patterns
-                "*.x86_64", "*.x86", "*.bin", "*.sh",
-                # Common Linux directories
-                "lib", "lib64", "bin", "share",
-                # Common Linux files
-                "*.so", "*.so.*"
+            # Check 2: Look for Linux-specific file patterns only (no directories)
+            linux_file_indicators = [
+                "*.x86_64", "*.x86", "*.bin", "*.sh",  # Linux executable patterns
+                "*.so", "*.so.*"  # Linux shared libraries
             ]
             
             linux_files_found = []
-            for pattern in linux_indicators:
+            for pattern in linux_file_indicators:
                 matches = list(game_path_obj.rglob(pattern))
-                if matches:
-                    linux_files_found.extend([str(m.relative_to(game_path_obj)) for m in matches[:5]])  # Limit to 5 examples
+                # Filter to only include files (not directories)
+                file_matches = [m for m in matches if m.is_file()]
+                if file_matches:
+                    linux_files_found.extend([str(m.relative_to(game_path_obj)) for m in file_matches[:5]])  # Limit to 5 examples
             
-            # Check 3: Look for specific Linux game files
+            # Check 3: Look for Linux executables (files without extension that are ELF binaries)
             linux_executables = []
             for file in game_path_obj.iterdir():
-                if file.is_file() and file.suffix == "":  # Files without extension (common for Linux executables)
+                if file.is_file() and file.suffix == "":  # Files without extension
                     try:
                         # Check if file is executable
                         if file.stat().st_mode & 0o111:  # Has execute permission
@@ -300,45 +760,35 @@ class Plugin:
                     except Exception as e:
                         decky.logger.debug(f"Error checking file {file}: {str(e)}")
             
-            # Check 4: Look for Unity Linux indicators
-            unity_linux_indicators = [
-                "*_Data/Plugins/x86_64",
-                "*_Data/Mono",
-                "UnityPlayer.so"
+            # Check 4: Look for Unity Linux file indicators (files only)
+            unity_linux_file_patterns = [
+                "UnityPlayer.so",
+                "*_Data/Plugins/x86_64/*.so",
+                "*_Data/Mono/etc/mono/config"
             ]
             
             unity_linux_files = []
-            for pattern in unity_linux_indicators:
+            for pattern in unity_linux_file_patterns:
                 matches = list(game_path_obj.rglob(pattern))
-                if matches:
-                    unity_linux_files.extend([str(m.relative_to(game_path_obj)) for m in matches[:3]])
+                # Filter to only include files
+                file_matches = [m for m in matches if m.is_file()]
+                if file_matches:
+                    unity_linux_files.extend([str(m.relative_to(game_path_obj)) for m in file_matches[:3]])
             
-            # Check 5: Read Steam manifest to get platform info
-            steam_root = Path(decky.HOME) / ".steam" / "steam"
-            library_file = steam_root / "steamapps" / "libraryfolders.vdf"
-            manifest_platform = None
-            
-            if library_file.exists():
-                library_paths = []
-                with open(library_file, "r", encoding="utf-8") as file:
-                    for line in file:
-                        if '"path"' in line:
-                            path = line.split('"path"')[1].strip().strip('"').replace("\\\\", "/")
-                            library_paths.append(path)
-                
-                for library_path in library_paths:
-                    manifest_path = Path(library_path) / "steamapps" / f"appmanifest_{appid}.acf"
-                    if manifest_path.exists():
-                        try:
-                            with open(manifest_path, "r", encoding="utf-8") as manifest:
-                                content = manifest.read()
-                                # Look for tool information which might indicate platform
-                                if '"tool"' in content and '"1"' in content:
-                                    # This might be a tool/utility, not a game
-                                    pass
-                        except Exception as e:
-                            decky.logger.debug(f"Error reading manifest: {str(e)}")
-                        break
+            # Check 5: Look for other Linux-specific files
+            linux_specific_files = []
+            for file in game_path_obj.rglob("*"):
+                if file.is_file():
+                    file_name = file.name.lower()
+                    # Check for common Linux game files
+                    if any(pattern in file_name for pattern in [
+                        "start.sh", "run.sh", "launch.sh",  # Launch scripts
+                        ".desktop",  # Desktop files
+                        "libc.so", "libstdc++.so", "libgcc_s.so"  # Common Linux libraries
+                    ]):
+                        linux_specific_files.append(str(file.relative_to(game_path_obj)))
+                        if len(linux_specific_files) >= 5:  # Limit examples
+                            break
             
             # Decision logic
             is_linux_game = False
@@ -357,19 +807,24 @@ class Plugin:
                 reasons.append(f"Found Unity Linux files: {', '.join(unity_linux_files)}")
             
             # Medium indicators
-            if not has_main_exe and linux_files_found:
+            if not has_main_exe and len(linux_files_found) >= 3:
                 is_linux_game = True
                 confidence = "medium"
-                reasons.append(f"No Windows .exe files found, but Linux files present")
+                reasons.append(f"No Windows .exe files found, but multiple Linux files present")
+            
+            if linux_specific_files:
+                is_linux_game = True
+                confidence = "medium" if confidence == "low" else confidence
+                reasons.append(f"Found Linux-specific files: {', '.join(linux_specific_files[:3])}")
             
             # Weak indicators
-            if not has_exe_files and len(linux_files_found) > 10:
+            if not has_exe_files and len(linux_files_found) >= 1:
                 is_linux_game = True
                 confidence = "medium" if not reasons else confidence
-                reasons.append("Many Linux-style files found, no .exe files")
+                reasons.append("Linux files found, no Windows executables")
             
             # Additional context
-            total_files = len(list(game_path_obj.rglob("*"))) if game_path_obj.exists() else 0
+            total_files = len([f for f in game_path_obj.rglob("*") if f.is_file()]) if game_path_obj.exists() else 0
             
             result = {
                 "status": "success",
@@ -381,7 +836,8 @@ class Plugin:
                     "has_main_exe": has_main_exe,
                     "main_exe_count": len(main_exe_files),
                     "linux_executables": linux_executables,
-                    "linux_files_found": len(linux_files_found),
+                    "linux_files_count": len(linux_files_found),
+                    "linux_specific_files": linux_specific_files,
                     "unity_linux_files": len(unity_linux_files),
                     "total_files": total_files,
                     "game_path": str(game_path)
@@ -873,6 +1329,10 @@ class Plugin:
             shutil.copy2(reshade_dll_src, reshade_dll_dst)
             shutil.copy2(d3dcompiler_src, d3dcompiler_dst)
             
+            # Set proper permissions for DLL files (read/write for all)
+            os.chmod(reshade_dll_dst, 0o666)
+            os.chmod(d3dcompiler_dst, 0o666)
+            
             # Copy shader directory if exists
             if os.path.exists(os.path.join(self.main_path, "ReShade_shaders")):
                 shaders_dst = os.path.join(exe_dir, "ReShade_shaders")
@@ -916,9 +1376,13 @@ class Plugin:
                 # Update the PresetPath to use the local directory
                 ini_content = re.sub(r'PresetPath=.*', r'PresetPath=.', ini_content)
                 
-                # Write the modified ini file
+                # Write the modified ini file with proper permissions
                 with open(reshade_ini_dst, 'w', encoding='utf-8') as f:
                     f.write(ini_content)
+                
+                # Set proper permissions for ReShade.ini (read/write for all)
+                os.chmod(reshade_ini_dst, 0o666)
+                
             else:
                 # If no ReShade.ini exists, create a basic one
                 with open(reshade_ini_dst, 'w', encoding='utf-8') as f:
@@ -936,7 +1400,39 @@ class Plugin:
     KeyNextPreset=0
     KeyPreviousPreset=0
     """)
+                # Set proper permissions (read/write for all)
+                os.chmod(reshade_ini_dst, 0o666)
+            
+            # Handle ReShadePreset.ini - preserve existing user settings
+            reshade_preset_dst = os.path.join(exe_dir, "ReShadePreset.ini")
+            
+            # Only create the file if it doesn't already exist (preserve existing user settings)
+            if not os.path.exists(reshade_preset_dst):
+                with open(reshade_preset_dst, 'w', encoding='utf-8') as f:
+                    f.write(f"""# ReShade Preset Configuration for {os.path.basename(game_path)}
+    # This file will be automatically populated when you save presets in ReShade
+    # Press HOME key in-game to open ReShade overlay
+    # Go to Settings -> General -> "Reload all shaders" if shaders don't appear
+
+    # Example preset configuration:
+    # [Preset1]
+    # Techniques=SMAA,Clarity,LumaSharpen
+    # PreprocessorDefinitions=
+
+    # Uncomment and modify the lines below to create a default preset:
+    # [Default]
+    # Techniques=
+    # PreprocessorDefinitions=
+    """)
                 
+                # Set proper permissions for ReShadePreset.ini (read/write for all)
+                os.chmod(reshade_preset_dst, 0o666)
+                decky.logger.info("Created new ReShadePreset.ini with proper permissions")
+            else:
+                # File exists, just ensure it has proper permissions
+                os.chmod(reshade_preset_dst, 0o666)
+                decky.logger.info("ReShadePreset.ini already exists, updated permissions only")
+            
             # Create a README file to help users with the configuration
             readme_path = os.path.join(exe_dir, "ReShade_README.txt")
             with open(readme_path, 'w', encoding='utf-8') as f:
@@ -958,7 +1454,31 @@ class Plugin:
     5. If not, update them to: ".\\ReShade_shaders"
 
     Shader preset files (.ini) will be saved in this game directory.
+
+    Files created:
+    - ReShade.ini: Main ReShade configuration
+    - ReShadePreset.ini: Preset configurations (auto-populated when you save presets)
+    - {dll_override}.dll: ReShade DLL
+    - d3dcompiler_47.dll: DirectX shader compiler
+    - ReShade_shaders/: Shader files directory
+    - AutoHDR.addon{arch}: AutoHDR addon (if available)
+
+    Note: If ReShadePreset.ini already existed, your previous settings were preserved.
     """)
+            
+            # Set proper permissions for README (read/write for all)
+            os.chmod(readme_path, 0o666)
+            
+            # Copy AutoHDR addon files if available
+            autohdr_addon_path = os.path.join(self.main_path, "AutoHDR_addons", f"AutoHDR.addon{arch}")
+            if os.path.exists(autohdr_addon_path):
+                autohdr_dst = os.path.join(exe_dir, f"AutoHDR.addon{arch}")
+                try:
+                    shutil.copy2(autohdr_addon_path, autohdr_dst)
+                    os.chmod(autohdr_dst, 0o666)
+                    decky.logger.info(f"AutoHDR addon copied successfully for {arch}-bit architecture")
+                except Exception as e:
+                    decky.logger.warning(f"Failed to copy AutoHDR addon: {str(e)}")
                 
             return {"status": "success", "output": f"ReShade installed successfully for Heroic game using {dll_override} override."}
         except Exception as e:
@@ -1110,6 +1630,7 @@ class Plugin:
                     
                     # Logarithmic scoring for size - diminishing returns for very large files
                     if size_mb > 0:
+                        import math
                         size_score = min(1.5, math.log10(size_mb) / 2)  # Reduced weight for size
                         decky.logger.debug(f"  Size score: +{size_score:.2f} ({size_mb:.2f} MB)")
                         score += size_score
@@ -1286,7 +1807,7 @@ class Plugin:
         raise ValueError(f"Could not find installation directory for AppID: {appid}")
 
     async def uninstall_reshade_for_heroic_game(self, game_path: str) -> dict:
-        """Uninstall ReShade from a Heroic game"""
+        """Uninstall ReShade from a Heroic game while preserving user presets"""
         try:
             decky.logger.info(f"Uninstalling ReShade from Heroic game at: {game_path}")
             
@@ -1296,11 +1817,13 @@ class Plugin:
                 decky.logger.warning(f"Could not find executable directory, using provided path: {game_path}")
                 exe_dir = game_path
             
-            # Remove ReShade files
+            # Remove ReShade files (excluding ReShadePreset.ini to preserve user settings)
             reshade_files = [
                 "d3d8.dll", "d3d9.dll", "d3d10.dll", "d3d11.dll", "d3d12.dll", 
                 "dxgi.dll", "opengl32.dll", "dinput8.dll", "ddraw.dll",
-                "d3dcompiler_47.dll", "ReShade.ini", "ReShade_README.txt"
+                "d3dcompiler_47.dll", "ReShade.ini", "ReShade_README.txt",
+                "AutoHDR.addon32", "AutoHDR.addon64"
+                # Note: ReShadePreset.ini is intentionally excluded to preserve user settings
             ]
             
             for file in reshade_files:
@@ -1318,7 +1841,14 @@ class Plugin:
                     shutil.rmtree(shaders_path)
                 decky.logger.info(f"Removed {shaders_path}")
             
-            return {"status": "success", "output": "ReShade uninstalled successfully."}
+            # Check if ReShadePreset.ini exists and inform user it's preserved
+            preset_path = os.path.join(exe_dir, "ReShadePreset.ini")
+            if os.path.exists(preset_path):
+                decky.logger.info(f"ReShadePreset.ini preserved at {preset_path}")
+                return {"status": "success", "output": "ReShade uninstalled successfully.\nYour shader presets (ReShadePreset.ini) have been preserved for future use."}
+            else:
+                return {"status": "success", "output": "ReShade uninstalled successfully."}
+                
         except Exception as e:
             decky.logger.error(f"Error uninstalling ReShade: {str(e)}")
             return {"status": "error", "message": str(e)}
