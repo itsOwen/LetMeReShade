@@ -52,6 +52,13 @@ const saveShaderPreferences = callable<[string[]], InstallResult>("save_shader_p
 const loadShaderPreferences = callable<[], any>("load_shader_preferences");
 const hasShaderPreferences = callable<[], any>("has_shader_preferences");
 
+// AutoHDR preferences callables
+const saveAutoHdrPreference = callable<[boolean], InstallResult>("save_autohdr_preference");
+const loadAutoHdrPreference = callable<[], any>("load_autohdr_preference");
+
+// Configuration tracking callables
+const loadInstalledConfiguration = callable<[], any>("load_installed_configuration");
+
 // VkBasalt callables
 const checkVkBasaltPath = callable<[], PathCheckResponse>("check_vkbasalt_path");
 const runInstallVkBasalt = callable<[], InstallResult>("run_install_vkbasalt");
@@ -72,8 +79,10 @@ function ReShadeInstallerSection() {
   const [pendingAddonState, setPendingAddonState] = useState<boolean>(false);
   const [deckModel, setDeckModel] = useState<DeckModelResponse | null>(null);
   const [modelLoading, setModelLoading] = useState<boolean>(true);
+  const [installedConfig, setInstalledConfig] = useState<any>(null);
+  const [configChanged, setConfigChanged] = useState<boolean>(false);
   
-  // State for shader preferences (removed shaderPreferences since it's not used)
+  // State for shader preferences
   const [hasPreferences, setHasPreferences] = useState<boolean>(false);
   const [preferencesInfo, setPreferencesInfo] = useState<any>(null);
 
@@ -149,6 +158,75 @@ function ReShadeInstallerSection() {
     checkPreferences();
   }, []);
 
+  // Load AutoHDR preference on component mount
+  useEffect(() => {
+    const loadAutoHdrPref = async () => {
+      try {
+        const result = await loadAutoHdrPreference();
+        if (result.status === "success") {
+          setAutoHdrEnabled(result.autohdr_enabled);
+        }
+      } catch (e) {
+        await logError(`Error loading AutoHDR preference: ${String(e)}`);
+      }
+    };
+    
+    loadAutoHdrPref();
+  }, []);
+
+  // Load installed configuration
+  useEffect(() => {
+    const loadInstalledConfig = async () => {
+      try {
+        const result = await loadInstalledConfiguration();
+        if (result.status === "success" && result.config) {
+          setInstalledConfig(result.config);
+        }
+      } catch (e) {
+        await logError(`Error loading installed configuration: ${String(e)}`);
+      }
+    };
+    
+    loadInstalledConfig();
+  }, [pathExists]);
+
+  // Detect configuration changes
+  useEffect(() => {
+    if (!installedConfig || !pathExists) {
+      setConfigChanged(false);
+      return;
+    }
+
+    const currentConfig = {
+      with_addon: addonEnabled,
+      version: selectedVersion?.value || 'latest',
+      with_autohdr: autoHdrEnabled,
+      selected_shaders: [] // We'll need to load current shader preferences
+    };
+
+    // Load current shader preferences for comparison
+    const checkConfigChange = async () => {
+      try {
+        const shaderPrefs = await loadShaderPreferences();
+        if (shaderPrefs.status === "success" && shaderPrefs.selected_shaders) {
+          currentConfig.selected_shaders = shaderPrefs.selected_shaders;
+        }
+
+        const hasChanged = 
+          currentConfig.with_addon !== installedConfig.with_addon ||
+          currentConfig.version !== installedConfig.version ||
+          currentConfig.with_autohdr !== installedConfig.with_autohdr ||
+          JSON.stringify(currentConfig.selected_shaders.sort()) !== JSON.stringify((installedConfig.selected_shaders || []).sort());
+
+        setConfigChanged(hasChanged);
+      } catch (e) {
+        await logError(`Error checking config changes: ${String(e)}`);
+      }
+    };
+
+    checkConfigChange();
+  }, [addonEnabled, selectedVersion, autoHdrEnabled, installedConfig, pathExists]);
+
   useEffect(() => {
     if (installResult) {
       const timer = setTimeout(() => setInstallResult(null), 5000);
@@ -185,6 +263,15 @@ function ReShadeInstallerSection() {
           prefResult.selected_shaders
         );
         setInstallResult(result);
+        
+        // If installation was successful, reload installed config
+        if (result.status === "success") {
+          const configResult = await loadInstalledConfiguration();
+          if (configResult.status === "success" && configResult.config) {
+            setInstalledConfig(configResult.config);
+          }
+          setConfigChanged(false);
+        }
         setInstalling(false);
       } else {
         // No preferences saved, show selection modal
@@ -200,6 +287,15 @@ function ReShadeInstallerSection() {
                   selectedShaders
                 );
                 setInstallResult(result);
+                
+                // If installation was successful, reload installed config
+                if (result.status === "success") {
+                  const configResult = await loadInstalledConfiguration();
+                  if (configResult.status === "success" && configResult.config) {
+                    setInstalledConfig(configResult.config);
+                  }
+                  setConfigChanged(false);
+                }
               } catch (e) {
                 setInstallResult({ status: "error", message: String(e) });
                 await logError(`Install error: ${String(e)}`);
@@ -230,6 +326,12 @@ function ReShadeInstallerSection() {
       setUninstallResult(result);
       setAddonEnabled(false);
       setAutoHdrEnabled(false);
+      
+      // Clear installed configuration
+      if (result.status === "success") {
+        setInstalledConfig(null);
+        setConfigChanged(false);
+      }
     } catch (e) {
       setUninstallResult({ status: "error", message: String(e) });
       await logError(`Uninstall error: ${String(e)}`);
@@ -322,7 +424,7 @@ function ReShadeInstallerSection() {
     }
   };
 
-  const handleAutoHdrToggle = () => {
+  const handleAutoHdrToggle = async () => {
     if (!autoHdrEnabled) {
       // Create warning message based on detected model
       let warningTitle = "Enable AutoHDR Components?";
@@ -347,11 +449,25 @@ function ReShadeInstallerSection() {
           strDescription={warningMessage}
           strOKButtonText="Enable AutoHDR"
           strCancelButtonText="Cancel"
-          onOK={() => setAutoHdrEnabled(true)}
+          onOK={async () => {
+            setAutoHdrEnabled(true);
+            // Save preference
+            try {
+              await saveAutoHdrPreference(true);
+            } catch (e) {
+              await logError(`Error saving AutoHDR preference: ${String(e)}`);
+            }
+          }}
         />
       );
     } else {
       setAutoHdrEnabled(false);
+      // Save preference
+      try {
+        await saveAutoHdrPreference(false);
+      } catch (e) {
+        await logError(`Error saving AutoHDR preference: ${String(e)}`);
+      }
     }
   };
 
@@ -375,32 +491,6 @@ function ReShadeInstallerSection() {
     }
     
     return text;
-  };
-
-  const getVersionMismatchWarning = () => {
-    if (!pathExists || !currentVersionInfo || !selectedVersion) return null;
-
-    const currentVersion = currentVersionInfo.version;
-    const selectedVersionValue = selectedVersion.value;
-    const currentAddon = currentVersionInfo.addon;
-
-    if (currentVersion !== selectedVersionValue || currentAddon !== addonEnabled) {
-      return (
-        <PanelSectionRow>
-          <div style={{
-            padding: '12px',
-            marginBottom: '12px',
-            backgroundColor: 'var(--decky-warning)',
-            borderRadius: '4px',
-            color: 'white'
-          }}>
-            ⚠️ Configuration change detected - reinstallation required
-          </div>
-        </PanelSectionRow>
-      );
-    }
-
-    return null;
   };
 
   const renderDeckModelInfo = () => {
@@ -559,11 +649,23 @@ function ReShadeInstallerSection() {
         </PanelSectionRow>
       )}
 
-      {/* Version mismatch warning if ReShade is installed */}
-      {getVersionMismatchWarning()}
+      {/* Configuration change warning */}
+      {pathExists === true && configChanged && (
+        <PanelSectionRow>
+          <div style={{
+            padding: '12px',
+            marginBottom: '12px',
+            backgroundColor: '#ffa726',
+            borderRadius: '4px',
+            color: 'white'
+          }}>
+            ⚠️ Configuration changed - Reinstallation required to apply changes
+          </div>
+        </PanelSectionRow>
+      )}
 
-      {/* Install button - always show when version is selected */}
-      {selectedVersion && (
+      {/* Install button - show when not installed OR when config changed */}
+      {selectedVersion && (pathExists === false || configChanged) && (
         <PanelSectionRow>
           <ButtonItem
             layout="below"
