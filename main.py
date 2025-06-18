@@ -1157,9 +1157,15 @@ class Plugin:
             except ValueError as e:
                 return {"status": "error", "message": str(e)}
 
+            # FIXED: Always include App ID in the command
             cmd = ["/bin/bash", str(script_path), action, game_path, dll_override]
             if vulkan_mode:
-                cmd.extend([vulkan_mode, os.path.expanduser(f"~/.local/share/Steam/steamapps/compatdata/{appid}")])
+                cmd.extend([vulkan_mode, os.path.expanduser(f"~/.local/share/Steam/steamapps/compatdata/{appid}"), appid])
+            else:
+                # For non-Vulkan mode, add empty placeholders for vulkan_mode and wineprefix, then add appid
+                cmd.extend(["", "", appid])
+            
+            decky.logger.info(f"Executing command: {' '.join(cmd)}")
             
             process = subprocess.run(
                 cmd,
@@ -1168,6 +1174,10 @@ class Plugin:
                 capture_output=True,
                 text=True
             )
+            
+            decky.logger.info(f"Script output: {process.stdout}")
+            if process.stderr:
+                decky.logger.error(f"Script errors: {process.stderr}")
             
             if process.returncode != 0:
                 return {"status": "error", "message": process.stderr}
