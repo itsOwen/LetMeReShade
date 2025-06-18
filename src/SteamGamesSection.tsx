@@ -16,6 +16,7 @@ const checkReShadePath = callable<[], PathCheckResponse>("check_reshade_path");
 const checkVkBasaltPath = callable<[], PathCheckResponse>("check_vkbasalt_path");
 const listInstalledGames = callable<[], GameListResponse>("list_installed_games");
 const detectLinuxGame = callable<[string], LinuxGameDetectionResponse>("detect_linux_game");
+const findGameExecutablePath = callable<[string], ExecutableDetectionResponse>("find_game_executable_path");
 const logError = callable<[string], void>("log_error");
 
 interface GameInfo {
@@ -54,6 +55,15 @@ interface LinuxGameDetectionResponse {
   message?: string;
 }
 
+interface ExecutableDetectionResponse {
+  status: string;
+  method?: string;
+  executable_path?: string;
+  all_executables?: any[];
+  confidence?: string;
+  message?: string;
+}
+
 const SteamGamesSection = () => {
   const [selectedGame, setSelectedGame] = useState<GameInfo | null>(null);
   const [selectedDll, setSelectedDll] = useState<DllOverride | null>(null);
@@ -62,9 +72,11 @@ const SteamGamesSection = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [linuxGameDetection, setLinuxGameDetection] = useState<LinuxGameDetectionResponse | null>(null);
   const [checkingLinuxGame, setCheckingLinuxGame] = useState<boolean>(false);
+  const [executableDetection, setExecutableDetection] = useState<ExecutableDetectionResponse | null>(null);
+  const [checkingExecutable, setCheckingExecutable] = useState<boolean>(false);
 
   const dllOverrides: DllOverride[] = [
-    { label: 'Automatic (Detect API)', value: 'auto' },
+    { label: 'Automatic (Enhanced Detection)', value: 'auto' },
     { label: 'DXGI (DirectX 10/11/12)', value: 'dxgi' },
     { label: 'D3D9 (DirectX 9)', value: 'd3d9' },
     { label: 'D3D8 (DirectX 8)', value: 'd3d8' },
@@ -115,6 +127,29 @@ const SteamGamesSection = () => {
     };
 
     checkLinuxGame();
+  }, [selectedGame]);
+
+  // Check executable detection when a game is selected
+  useEffect(() => {
+    const checkExecutableDetection = async () => {
+      if (!selectedGame) {
+        setExecutableDetection(null);
+        return;
+      }
+
+      try {
+        setCheckingExecutable(true);
+        const detection = await findGameExecutablePath(selectedGame.appid);
+        setExecutableDetection(detection);
+      } catch (error) {
+        await logError(`Executable detection error: ${String(error)}`);
+        setExecutableDetection(null);
+      } finally {
+        setCheckingExecutable(false);
+      }
+    };
+
+    checkExecutableDetection();
   }, [selectedGame]);
 
   const handlePatch = async () => {
@@ -178,10 +213,29 @@ const SteamGamesSection = () => {
         return;
       }
 
+      // Create enhanced confirmation dialog with detection info
+      const getDetectionInfo = () => {
+        let info = `Are you sure you want to patch ${selectedGame.name} with ${selectedDll.label}?`;
+        
+        if (executableDetection && executableDetection.status === "success") {
+          info += `\n\nExecutable Detection:`;
+          info += `\n• Method: ${executableDetection.method === 'steam_logs' ? 'Steam Console Logs' : 'Enhanced File Analysis'}`;
+          if (executableDetection.executable_path) {
+            const fileName = executableDetection.executable_path.split('/').pop();
+            info += `\n• Found: ${fileName}`;
+          }
+          if (executableDetection.confidence) {
+            info += `\n• Confidence: ${executableDetection.confidence}`;
+          }
+        }
+        
+        return info;
+      };
+
       showModal(
         <ConfirmModal
           strTitle="Confirm Steam Game Patch"
-          strDescription={`Are you sure you want to patch ${selectedGame.name} with ${selectedDll.label}?`}
+          strDescription={getDetectionInfo()}
           strOKButtonText="Patch"
           strCancelButtonText="Cancel"
           onOK={async () => {
@@ -201,7 +255,16 @@ const SteamGamesSection = () => {
                   const launchOptions = launchOptionsMatch[1];
                   const detectedApi = launchOptions.match(/;(\w+)=n,b/)?.pop() || 'dxgi';
                   await SteamClient.Apps.SetAppLaunchOptions(parseInt(selectedGame.appid), launchOptions);
-                  setResult(`Successfully patched ${selectedGame.name}.\nDetected ${detectedApi.toUpperCase()} as the best API.\nPress HOME key in-game to open ReShade overlay.`);
+                  
+                  let successMessage = `Successfully patched ${selectedGame.name}.\nDetected ${detectedApi.toUpperCase()} as the best API.\nPress HOME key in-game to open ReShade overlay.`;
+                  
+                  // Add detection method info
+                  if (executableDetection && executableDetection.method) {
+                    const methodName = executableDetection.method === 'steam_logs' ? 'Steam Console Logs' : 'Enhanced File Analysis';
+                    successMessage += `\n\nDetection Method: ${methodName}`;
+                  }
+                  
+                  setResult(successMessage);
                 } else {
                   // Fallback if we can't extract from output
                   await SteamClient.Apps.SetAppLaunchOptions(parseInt(selectedGame.appid), `WINEDLLOVERRIDES="d3dcompiler_47=n;${dllValue}=n,b" %command%`);
@@ -328,6 +391,66 @@ const SteamGamesSection = () => {
     );
   };
 
+  const renderExecutableDetectionInfo = () => {
+    if (!executableDetection || executableDetection.status !== "success") return null;
+
+    const methodColor = executableDetection.method === 'steam_logs' ? "#4CAF50" : "#2196F3";
+    const methodIcon = executableDetection.method === 'steam_logs' ? "📋" : "🔍";
+    const methodName = executableDetection.method === 'steam_logs' ? 'Steam Console Logs' : 'Enhanced File Analysis';
+    const isEnhancedDetection = executableDetection.method !== 'steam_logs';
+    
+    return (
+      <>
+        <PanelSectionRow>
+          <div style={{
+            padding: '10px',
+            marginTop: '8px',
+            backgroundColor: methodColor,
+            borderRadius: '4px',
+            color: 'white',
+            fontSize: '0.9em'
+          }}>
+            <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+              {methodIcon} Executable Detection: {methodName}
+            </div>
+            {executableDetection.executable_path && (
+              <div style={{ fontSize: '0.85em' }}>
+                Found: {executableDetection.executable_path.split('/').pop()}
+              </div>
+            )}
+            {executableDetection.confidence && (
+              <div style={{ fontSize: '0.85em' }}>
+                Confidence: {executableDetection.confidence}
+              </div>
+            )}
+          </div>
+        </PanelSectionRow>
+        
+        {isEnhancedDetection && (
+          <PanelSectionRow>
+            <div style={{
+              padding: '8px',
+              marginTop: '4px',
+              backgroundColor: 'var(--decky-highlighted-ui-bg)',
+              borderRadius: '4px',
+              fontSize: '0.85em',
+              opacity: 0.9,
+              border: '1px solid var(--decky-subtle-border)'
+            }}>
+              <div style={{ marginBottom: '4px', fontWeight: 'bold' }}>
+                💡 Want full confidence detection?
+              </div>
+              <div>
+                Launch {selectedGame?.name} once, then close it and try again. 
+                This will populate Steam logs for 100% accurate detection.
+              </div>
+            </div>
+          </PanelSectionRow>
+        )}
+      </>
+    );
+  };
+
   return (
     <PanelSection title="Steam Games">
       {loading ? (
@@ -351,15 +474,16 @@ const SteamGamesSection = () => {
             />
           </PanelSectionRow>
 
-          {selectedGame && checkingLinuxGame && (
+          {selectedGame && (checkingLinuxGame || checkingExecutable) && (
             <PanelSectionRow>
               <div style={{ fontSize: '0.9em', opacity: 0.7 }}>
-                🔍 Checking game version...
+                🔍 Analyzing game... {checkingLinuxGame && "Checking version"} {checkingExecutable && "Detecting executable"}
               </div>
             </PanelSectionRow>
           )}
 
           {renderLinuxGameWarning()}
+          {renderExecutableDetectionInfo()}
 
           {selectedGame && (
             <PanelSectionRow>
