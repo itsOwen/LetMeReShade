@@ -14,6 +14,205 @@ log_message() {
     echo "[DEBUG] $1" >&2
 }
 
+# New function to parse Steam logs for exact executable path
+parse_steam_logs_for_executable() {
+    local appid="$1"
+    local executable_path=""
+    
+    log_message "Parsing Steam logs for App ID: $appid"
+    
+    # Steam log file locations
+    local log_files=(
+        "/home/$USER/.steam/steam/logs/console-linux.txt"
+        "/home/$USER/.steam/steam/logs/console_log.txt"
+        "/home/$USER/.steam/steam/logs/console_log.previous.txt"
+    )
+    
+    for log_file in "${log_files[@]}"; do
+        if [ ! -f "$log_file" ]; then
+            continue
+        fi
+        
+        log_message "Checking log file: $log_file"
+        
+        # Look for recent game launch patterns for this app ID
+        # Pattern 1: Direct executable in launch command
+        # Example: AppId=501300 -- ... '/path/to/game.exe'
+        executable_path=$(grep "AppId=$appid" "$log_file" | grep "\.exe" | tail -1 | sed -n "s/.*'\([^']*\.exe\)'.*/\1/p")
+        
+        if [ ! -z "$executable_path" ] && [ -f "$executable_path" ]; then
+            log_message "Found executable from logs: $executable_path"
+            echo "$executable_path"
+            return 0
+        fi
+        
+        # Pattern 2: Game process added/updated logs
+        # Example: Game process added : AppID 501300 "command with exe path"
+        executable_path=$(grep "AppID $appid" "$log_file" | grep "\.exe" | tail -1 | sed -n "s/.*'\([^']*\.exe\)'.*/\1/p")
+        
+        if [ ! -z "$executable_path" ] && [ -f "$executable_path" ]; then
+            log_message "Found executable from process logs: $executable_path"
+            echo "$executable_path"
+            return 0
+        fi
+    done
+    
+    log_message "No executable found in Steam logs for App ID: $appid"
+    return 1
+}
+
+# Enhanced function to detect game architecture and API with improved patterns
+detect_game_arch_and_api_enhanced() {
+    local game_path="$1"
+    local arch="64"  # Default to 64-bit
+    local detected_api="dxgi"  # Default to DXGI
+    
+    log_message "Enhanced analysis of game directory: $game_path"
+    
+    # Find all exe files in the game directory and subdirectories
+    local exe_files=()
+    while IFS= read -r -d '' exe; do
+        exe_files+=("$exe")
+    done < <(find "$game_path" -name "*.exe" -type f -print0 2>/dev/null)
+    
+    if [ ${#exe_files[@]} -eq 0 ]; then
+        log_message "No executable files found in game directory"
+        echo "${arch},${detected_api}"
+        return 0
+    fi
+    
+    log_message "Found ${#exe_files[@]} executable files"
+    
+    # Score and sort executables by likelihood of being the main game executable
+    local scored_exes=()
+    
+    for exe in "${exe_files[@]}"; do
+        local filename=$(basename "$exe")
+        local filename_lower=$(echo "$filename" | tr '[:upper:]' '[:lower:]')
+        local file_size=0
+        local score=0
+        
+        # Get file size
+        if [ -f "$exe" ]; then
+            file_size=$(stat -c%s "$exe" 2>/dev/null || echo "0")
+        fi
+        
+        # Skip obvious utility files
+        if [[ "$filename_lower" =~ (unins|setup|install|redist|prereq|crash|launcher|updater|patcher) ]]; then
+            log_message "Skipping utility executable: $filename"
+            continue
+        fi
+        
+        # Size-based scoring (larger = more likely to be main game)
+        local size_mb=$((file_size / 1024 / 1024))
+        if [ $size_mb -gt 50 ]; then
+            score=$((score + 100))
+        elif [ $size_mb -gt 20 ]; then
+            score=$((score + 50))
+        elif [ $size_mb -gt 5 ]; then
+            score=$((score + 20))
+        elif [ $size_mb -lt 1 ]; then
+            score=$((score - 50))
+        fi
+        
+        # Path-based scoring (discovered patterns)
+        local rel_path=$(echo "$exe" | sed "s|$game_path/||")
+        if [[ "$rel_path" =~ binaries/win64 ]]; then
+            score=$((score + 30))  # Unreal Engine pattern
+        elif [[ "$rel_path" =~ bin ]]; then
+            score=$((score + 20))   # Common bin directory
+        elif [[ ! "$rel_path" =~ / ]]; then
+            score=$((score + 10))   # Root directory
+        fi
+        
+        # Filename-based scoring
+        if [[ "$filename_lower" =~ (game|main|client|app) ]]; then
+            score=$((score + 15))
+        fi
+        
+        # Special patterns from real data
+        if [[ "$filename_lower" =~ shipping ]]; then
+            score=$((score + 25))   # Unreal shipping builds
+        elif [[ "$filename_lower" =~ win64 ]]; then
+            score=$((score + 10))   # 64-bit indicator
+        fi
+        
+        # Penalty for deep nesting (utilities often deeply nested)
+        local path_depth=$(echo "$rel_path" | tr -cd '/' | wc -c)
+        if [ $path_depth -gt 3 ]; then
+            score=$((score - path_depth * 5))
+        fi
+        
+        # Only include non-utility files
+        if [ $score -gt -500 ]; then
+            scored_exes+=("$score:$exe:$size_mb")
+            log_message "Scored executable: $filename (score: $score, size: ${size_mb}MB)"
+        fi
+    done
+    
+    if [ ${#scored_exes[@]} -eq 0 ]; then
+        log_message "No suitable executables found after filtering"
+        echo "${arch},${detected_api}"
+        return 0
+    fi
+    
+    # Sort by score (highest first) and get the best executable
+    local best_exe=""
+    local best_score=0
+    
+    for scored_exe in "${scored_exes[@]}"; do
+        local score=$(echo "$scored_exe" | cut -d: -f1)
+        local exe=$(echo "$scored_exe" | cut -d: -f2)
+        
+        if [ $score -gt $best_score ]; then
+            best_score=$score
+            best_exe="$exe"
+        fi
+    done
+    
+    if [ ! -z "$best_exe" ]; then
+        log_message "Selected best executable: $best_exe (score: $best_score)"
+        
+        # Check architecture of the selected executable
+        local file_info=$(file "$best_exe" 2>/dev/null)
+        log_message "File info for selected executable: $file_info"
+        
+        if echo "$file_info" | grep -Eq "x86-64|PE32\+"; then
+            arch="64"
+            detected_api="dxgi"
+            log_message "Detected 64-bit executable, using DXGI"
+        elif echo "$file_info" | grep -E "PE32 executable" | grep -v "PE32+"; then
+            arch="32"
+            detected_api="d3d9"
+            log_message "Detected 32-bit executable, using D3D9"
+        fi
+        
+        # Check for API-specific DLLs in the executable directory
+        local exe_dir=$(dirname "$best_exe")
+        
+        if [ -f "$exe_dir/d3d9.dll" ]; then
+            detected_api="d3d9"
+            log_message "Found d3d9.dll, using D3D9 API"
+        elif [ -f "$exe_dir/d3d11.dll" ]; then
+            detected_api="d3d11"
+            log_message "Found d3d11.dll, using D3D11 API"
+        elif [ -f "$exe_dir/d3d8.dll" ]; then
+            detected_api="d3d8"
+            log_message "Found d3d8.dll, using D3D8 API"
+        elif [ -f "$exe_dir/opengl32.dll" ]; then
+            detected_api="opengl32"
+            log_message "Found opengl32.dll, using OpenGL API"
+        elif [ -f "$exe_dir/dxgi.dll" ]; then
+            detected_api="dxgi"
+            log_message "Found dxgi.dll, using DXGI API"
+        fi
+    fi
+    
+    log_message "Final detection result - Architecture: $arch, API: $detected_api"
+    echo "${arch},${detected_api}"
+}
+
+# Original detection function (kept as fallback)
 detect_game_arch_and_api() {
     local game_path="$1"
     local arch="32"
@@ -65,11 +264,27 @@ setup_game_reshade() {
     local game_path="$1"
     local dll_override="$2"
     local arch="$3"
+    local appid="$4"  # New parameter for app ID
     
     log_message "Setting up ReShade:"
     log_message "Game path: $game_path"
     log_message "DLL override: $dll_override"
     log_message "Architecture: $arch-bit"
+    log_message "App ID: $appid"
+    
+    # NEW: Try to get exact executable path from Steam logs first
+    local exact_exe_path=""
+    if [ ! -z "$appid" ]; then
+        exact_exe_path=$(parse_steam_logs_for_executable "$appid")
+        if [ ! -z "$exact_exe_path" ] && [ -f "$exact_exe_path" ]; then
+            log_message "Steam logs provided exact executable: $exact_exe_path"
+            # Update game_path to the directory containing the exact executable
+            game_path=$(dirname "$exact_exe_path")
+            log_message "Updated game path to executable directory: $game_path"
+        else
+            log_message "Steam logs method failed, using provided game path: $game_path"
+        fi
+    fi
     
     # Verify ReShade installation
     if [ ! -d "$RESHADE_PATH/latest" ]; then
@@ -147,8 +362,9 @@ setup_game_reshade() {
     
     # Only create the file if it doesn't already exist (preserve existing user settings)
     if [ ! -f "$preset_file" ]; then
+        local game_name=$(basename "$(dirname "$game_path")" 2>/dev/null || basename "$game_path")
         cat > "$preset_file" << EOF
-# ReShade Preset Configuration for $(basename "$game_path")
+# ReShade Preset Configuration for $game_name
 # This file will be automatically populated when you save presets in ReShade
 # Press HOME key in-game to open ReShade overlay
 # Go to Settings -> General -> "Reload all shaders" if shaders don't appear
@@ -181,14 +397,16 @@ EOF
     
     # Create README file for Steam games
     local readme_file="$game_path/ReShade_README.txt"
+    local game_name=$(basename "$(dirname "$game_path")" 2>/dev/null || basename "$game_path")
     cat > "$readme_file" << EOF
-ReShade for $(basename "$game_path")
+ReShade for $game_name
 ------------------------------------
 Installed with LetMeReShade plugin for Steam
 
 DLL Override: $dll_override
 Architecture: $arch-bit
 Game Directory: $game_path
+$([ ! -z "$exact_exe_path" ] && echo "Exact Executable: $exact_exe_path")
 
 Press HOME key in-game to open the ReShade overlay.
 
@@ -208,6 +426,8 @@ Files created:
 - d3dcompiler_47.dll: DirectX shader compiler (symlinked)
 - ReShade_shaders/: Shader files directory (symlinked)
 - AutoHDR.addon$arch: AutoHDR addon (if available)
+
+Detection Method: $([ ! -z "$exact_exe_path" ] && echo "Steam Console Logs" || echo "Enhanced File Analysis")
 
 Note: If ReShadePreset.ini already existed, your previous settings were preserved.
 EOF
@@ -312,13 +532,15 @@ main() {
     local dll_override="${3:-dxgi}"
     local vulkan_mode="$4"
     local wineprefix="$5"
+    local appid="$6"  # New parameter for Steam App ID
     
-    log_message "Starting game manager with:"
+    log_message "Starting enhanced game manager with:"
     log_message "Action: $action"
     log_message "Game path: $game_path"
     log_message "DLL override: $dll_override"
     log_message "Vulkan mode: $vulkan_mode"
     log_message "WINEPREFIX: $wineprefix"
+    log_message "App ID: $appid"
     
     if [ ! -d "$RESHADE_PATH" ]; then
         log_message "Error: RESHADE_PATH does not exist: $RESHADE_PATH"
@@ -333,7 +555,8 @@ main() {
             exit 1
         fi
         
-        local detection_result=$(detect_game_arch_and_api "$game_path")
+        # Use enhanced detection for Vulkan mode too
+        local detection_result=$(detect_game_arch_and_api_enhanced "$game_path")
         local arch=$(echo "$detection_result" | cut -d',' -f1)
         setup_vulkan_support "$wineprefix" "$arch" "$action"
         exit $?
@@ -348,28 +571,31 @@ main() {
 
     case $action in
         "install")
-            local detection_result=$(detect_game_arch_and_api "$game_path")
+            # Use enhanced detection method
+            local detection_result=$(detect_game_arch_and_api_enhanced "$game_path")
             local arch=$(echo "$detection_result" | cut -d',' -f1)
             local detected_api=$(echo "$detection_result" | cut -d',' -f2)
             
-            # Use detected API only when auto-detection is requested
+            # Use detected API when auto-detection is requested
             if [ "$dll_override" = "auto" ]; then
                 dll_override="$detected_api"
-                log_message "Using detected API: $dll_override"
+                log_message "Auto-detection selected API: $dll_override"
             fi
             
             log_message "Setting executable permissions for game directory"
             chmod -R u+w "$game_path" 2>/dev/null || log_message "Warning: Could not set write permissions"
             
-            if setup_game_reshade "$game_path" "$dll_override" "$arch"; then
+            if setup_game_reshade "$game_path" "$dll_override" "$arch" "$appid"; then
                 # Update the WINEDLLOVERRIDES based on detected API
                 local override_cmd="WINEDLLOVERRIDES=\"d3dcompiler_47=n;${dll_override}=n,b\" %command%"
-                echo "Successfully installed ReShade"
+                echo "Successfully installed ReShade using enhanced detection"
                 if [ -f "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon$arch" ]; then
                     echo "AutoHDR components included (requires DirectX 10/11/12 games)"
                 fi
+                echo "Detected architecture: $arch-bit"
+                echo "Selected API: $dll_override"
                 echo "Use this launch option: $override_cmd"
-                echo "Press INSERT key in-game to open ReShade interface"
+                echo "Press HOME key in-game to open ReShade interface"
                 return 0
             else
                 echo "Failed to install ReShade" >&2
