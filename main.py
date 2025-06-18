@@ -1139,25 +1139,32 @@ class Plugin:
             script_path = assets_dir / "reshade-game-manager.sh"
             
             try:
-                # Use new executable detection method
+                # FIXED: For install, always use the original game path and let Bash handle all detection
+                # This prevents double-detection issues and ensures consistency
                 if action == "install":
-                    exe_result = await self.find_game_executable_path(appid)
-                    if exe_result["status"] == "success":
-                        game_path = os.path.dirname(exe_result["executable_path"])
-                        decky.logger.info(f"Using executable directory from {exe_result['method']}: {game_path}")
-                    else:
-                        # Fallback to old method if new method fails
-                        game_path = self._find_game_path(appid)
-                        decky.logger.warning(f"New detection failed, using fallback: {game_path}")
-                else:
-                    # For uninstall, use the old method (still reliable for finding base paths)
+                    # Get the base game installation path (not executable-specific directory)
                     game_path = self._find_game_path(appid)
+                    decky.logger.info(f"Using base game path for Bash detection: {game_path}")
+                else:
+                    # For uninstall, we still need to find where ReShade was installed
+                    # Try to use our detection first, then fall back to base path
+                    try:
+                        exe_result = await self.find_game_executable_path(appid)
+                        if exe_result["status"] == "success":
+                            game_path = os.path.dirname(exe_result["executable_path"])
+                            decky.logger.info(f"Using detected executable directory for uninstall: {game_path}")
+                        else:
+                            game_path = self._find_game_path(appid)
+                            decky.logger.info(f"Using base game path for uninstall: {game_path}")
+                    except:
+                        game_path = self._find_game_path(appid)
+                        decky.logger.info(f"Using base game path for uninstall (fallback): {game_path}")
                 
-                decky.logger.info(f"Found game path: {game_path}")
+                decky.logger.info(f"Final game path: {game_path}")
             except ValueError as e:
                 return {"status": "error", "message": str(e)}
 
-            # FIXED: Always include App ID in the command
+            # FIXED: Always include App ID - let Bash handle all detection logic
             cmd = ["/bin/bash", str(script_path), action, game_path, dll_override]
             if vulkan_mode:
                 cmd.extend([vulkan_mode, os.path.expanduser(f"~/.local/share/Steam/steamapps/compatdata/{appid}"), appid])
@@ -1738,6 +1745,18 @@ class Plugin:
             
             # Create a README file to help users with the configuration
             readme_path = os.path.join(exe_dir, "ReShade_README.txt")
+            
+            # Check if AutoHDR was actually installed
+            autohdr_installed = os.path.exists(os.path.join(exe_dir, f"AutoHDR.addon{arch}"))
+            autohdr_compatible = dll_override.lower() in ['dxgi', 'd3d11', 'd3d12']
+            
+            if autohdr_installed:
+                autohdr_status = f"- AutoHDR.addon{arch}: AutoHDR addon (DirectX 10/11/12 compatible)"
+            elif autohdr_compatible:
+                autohdr_status = f"- AutoHDR.addon{arch}: Not installed (AutoHDR addon file missing)"
+            else:
+                autohdr_status = f"- AutoHDR.addon{arch}: Not compatible with {dll_override} (requires DirectX 10/11/12)"
+            
             with open(readme_path, 'w', encoding='utf-8') as f:
                 f.write(f"""ReShade for {os.path.basename(game_path)}
     ------------------------------------
@@ -1764,7 +1783,12 @@ class Plugin:
     - {dll_override}.dll: ReShade DLL
     - d3dcompiler_47.dll: DirectX shader compiler
     - ReShade_shaders/: Shader files directory
-    - AutoHDR.addon{arch}: AutoHDR addon (if available)
+    {autohdr_status}
+
+    AutoHDR Compatibility:
+    - Compatible APIs: DXGI, D3D11, D3D12 (DirectX 10/11/12)
+    - Incompatible APIs: D3D9, D3D8, OpenGL32, DDraw, DInput8
+    - Current API: {dll_override} {'(✅ AutoHDR Compatible)' if autohdr_compatible else '(❌ AutoHDR Incompatible)'}
 
     Note: If ReShadePreset.ini already existed, your previous settings were preserved.
     """)
@@ -1772,16 +1796,29 @@ class Plugin:
             # Set proper permissions for README (read/write for all)
             os.chmod(readme_path, 0o666)
             
-            # Copy AutoHDR addon files if available
-            autohdr_addon_path = os.path.join(self.main_path, "AutoHDR_addons", f"AutoHDR.addon{arch}")
-            if os.path.exists(autohdr_addon_path):
-                autohdr_dst = os.path.join(exe_dir, f"AutoHDR.addon{arch}")
-                try:
-                    shutil.copy2(autohdr_addon_path, autohdr_dst)
-                    os.chmod(autohdr_dst, 0o666)
-                    decky.logger.info(f"AutoHDR addon copied successfully for {arch}-bit architecture")
-                except Exception as e:
-                    decky.logger.warning(f"Failed to copy AutoHDR addon: {str(e)}")
+            # Copy AutoHDR addon files if available AND compatible with the selected API
+            autohdr_compatible = dll_override.lower() in ['dxgi', 'd3d11', 'd3d12']
+            
+            if autohdr_compatible:
+                autohdr_addon_path = os.path.join(self.main_path, "AutoHDR_addons", f"AutoHDR.addon{arch}")
+                if os.path.exists(autohdr_addon_path):
+                    autohdr_dst = os.path.join(exe_dir, f"AutoHDR.addon{arch}")
+                    try:
+                        shutil.copy2(autohdr_addon_path, autohdr_dst)
+                        os.chmod(autohdr_dst, 0o666)
+                        decky.logger.info(f"AutoHDR addon copied successfully for {arch}-bit architecture (API: {dll_override})")
+                    except Exception as e:
+                        decky.logger.warning(f"Failed to copy AutoHDR addon: {str(e)}")
+                else:
+                    decky.logger.info(f"AutoHDR addon file not found: {autohdr_addon_path}")
+            else:
+                decky.logger.info(f"Skipping AutoHDR addon installation for API: {dll_override} (requires DirectX 10/11/12)")
+                # Remove any existing AutoHDR addon files if they exist from previous installations
+                for addon_arch in ['32', '64']:
+                    existing_addon = os.path.join(exe_dir, f"AutoHDR.addon{addon_arch}")
+                    if os.path.exists(existing_addon):
+                        decky.logger.info(f"Removing existing AutoHDR addon (incompatible with {dll_override})")
+                        os.remove(existing_addon)
                 
             return {"status": "success", "output": f"ReShade installed successfully for Heroic game using {dll_override} override."}
         except Exception as e:

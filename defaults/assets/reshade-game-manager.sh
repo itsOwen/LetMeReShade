@@ -19,6 +19,11 @@ parse_steam_logs_for_executable() {
     local appid="$1"
     local executable_path=""
     
+    if [ -z "$appid" ]; then
+        log_message "No App ID provided to parse_steam_logs_for_executable"
+        return 1
+    fi
+    
     log_message "Parsing Steam logs for App ID: $appid"
     
     # Steam log file locations
@@ -30,10 +35,11 @@ parse_steam_logs_for_executable() {
     
     for log_file in "${log_files[@]}"; do
         if [ ! -f "$log_file" ]; then
+            log_message "Log file not found: $log_file"
             continue
         fi
         
-        log_message "Checking log file: $log_file"
+        log_message "Checking log file: $log_file (size: $(stat -c%s "$log_file" 2>/dev/null || echo "unknown") bytes)"
         
         # Look for recent game launch patterns for this app ID
         # Pattern 1: Direct executable in launch command
@@ -41,7 +47,7 @@ parse_steam_logs_for_executable() {
         executable_path=$(grep "AppId=$appid" "$log_file" | grep "\.exe" | tail -1 | sed -n "s/.*'\([^']*\.exe\)'.*/\1/p")
         
         if [ ! -z "$executable_path" ] && [ -f "$executable_path" ]; then
-            log_message "Found executable from logs: $executable_path"
+            log_message "Found executable from direct launch logs: $executable_path"
             echo "$executable_path"
             return 0
         fi
@@ -54,6 +60,15 @@ parse_steam_logs_for_executable() {
             log_message "Found executable from process logs: $executable_path"
             echo "$executable_path"
             return 0
+        fi
+        
+        # Pattern 3: Look for any mention of the app ID with executable paths
+        local app_lines=$(grep "$appid" "$log_file" | grep "\.exe" | tail -5)
+        if [ ! -z "$app_lines" ]; then
+            log_message "Found App ID mentions with .exe in $log_file:"
+            echo "$app_lines" | while read -r line; do
+                log_message "  $line"
+            done
         fi
     done
     
@@ -152,8 +167,52 @@ detect_game_arch_and_api_enhanced() {
     
     if [ ${#scored_exes[@]} -eq 0 ]; then
         log_message "No suitable executables found after filtering"
-        echo "${arch},${detected_api}"
-        return 0
+        # Fallback: try to find ANY exe files and pick the largest one
+        log_message "Attempting fallback detection - looking for any .exe files"
+        
+        local fallback_exes=()
+        for exe in "${exe_files[@]}"; do
+            local filename=$(basename "$exe")
+            local file_size=0
+            
+            if [ -f "$exe" ]; then
+                file_size=$(stat -c%s "$exe" 2>/dev/null || echo "0")
+            fi
+            
+            # Only include files larger than 100KB to exclude tiny utilities
+            if [ $file_size -gt 102400 ]; then
+                fallback_exes+=("$file_size:$exe")
+                log_message "Fallback candidate: $filename (size: $((file_size / 1024))KB)"
+            fi
+        done
+        
+        if [ ${#fallback_exes[@]} -gt 0 ]; then
+            # Sort by size and pick the largest
+            local largest_exe=""
+            local largest_size=0
+            
+            for fallback_exe in "${fallback_exes[@]}"; do
+                local size=$(echo "$fallback_exe" | cut -d: -f1)
+                local exe=$(echo "$fallback_exe" | cut -d: -f2-)
+                
+                if [ $size -gt $largest_size ]; then
+                    largest_size=$size
+                    largest_exe="$exe"
+                fi
+            done
+            
+            if [ ! -z "$largest_exe" ]; then
+                log_message "Fallback detection selected: $largest_exe (size: $((largest_size / 1024))KB)"
+                best_exe="$largest_exe"
+                best_score=1  # Low score to indicate fallback was used
+            fi
+        fi
+        
+        if [ -z "$best_exe" ]; then
+            log_message "Even fallback detection failed - no suitable executables found"
+            echo "${arch},${detected_api}"
+            return 0
+        fi
     fi
     
     # Sort by score (highest first) and get the best executable
@@ -213,6 +272,9 @@ detect_game_arch_and_api_enhanced() {
         elif [ -f "$exe_dir/d3d11.dll" ]; then
             detected_api="d3d11"
             log_message "Found d3d11.dll, using D3D11 API"
+        elif [ -f "$exe_dir/d3d12.dll" ]; then
+            detected_api="d3d12"
+            log_message "Found d3d12.dll, using D3D12 API"
         elif [ -f "$exe_dir/d3d8.dll" ]; then
             detected_api="d3d8"
             log_message "Found d3d8.dll, using D3D8 API"
@@ -303,7 +365,8 @@ setup_game_reshade() {
     
     # NEW: Try to get exact executable path from Steam logs first
     local exact_exe_path=""
-    if [ ! -z "$appid" ]; then
+    if [ ! -z "$appid" ] && [ "$appid" != "" ]; then
+        log_message "Attempting Steam logs method with App ID: $appid"
         exact_exe_path=$(parse_steam_logs_for_executable "$appid")
         if [ ! -z "$exact_exe_path" ] && [ -f "$exact_exe_path" ]; then
             log_message "Steam logs provided exact executable: $exact_exe_path"
@@ -311,8 +374,10 @@ setup_game_reshade() {
             game_path=$(dirname "$exact_exe_path")
             log_message "Updated game path to executable directory: $game_path"
         else
-            log_message "Steam logs method failed, using provided game path: $game_path"
+            log_message "Steam logs method failed or returned invalid path, using provided game path: $game_path"
         fi
+    else
+        log_message "No App ID provided, skipping Steam logs method"
     fi
     
     # Verify ReShade installation
@@ -376,14 +441,41 @@ setup_game_reshade() {
         fi
     fi
     
-    # Copy AutoHDR addon files if available
-    local autohdr_addon="$MAIN_PATH/AutoHDR_addons/AutoHDR.addon${arch}"
-    if [ -f "$autohdr_addon" ]; then
-        log_message "Copying AutoHDR addon for ${arch}-bit architecture"
-        if cp "$autohdr_addon" "$game_path/AutoHDR.addon${arch}"; then
-            log_message "AutoHDR addon copied successfully"
+    # Copy AutoHDR addon files if available AND compatible with the selected API
+    local autohdr_compatible=false
+    case "$dll_override" in
+        "dxgi"|"d3d11"|"d3d12")
+            autohdr_compatible=true
+            log_message "API $dll_override is compatible with AutoHDR"
+            ;;
+        "d3d9"|"d3d8"|"opengl32"|"ddraw"|"dinput8")
+            autohdr_compatible=false
+            log_message "API $dll_override is NOT compatible with AutoHDR (requires DirectX 10/11/12)"
+            ;;
+        *)
+            autohdr_compatible=false
+            log_message "Unknown API $dll_override, skipping AutoHDR for safety"
+            ;;
+    esac
+    
+    if [ "$autohdr_compatible" = true ]; then
+        local autohdr_addon="$MAIN_PATH/AutoHDR_addons/AutoHDR.addon${arch}"
+        if [ -f "$autohdr_addon" ]; then
+            log_message "Copying AutoHDR addon for ${arch}-bit architecture (API: $dll_override)"
+            if cp "$autohdr_addon" "$game_path/AutoHDR.addon${arch}"; then
+                log_message "AutoHDR addon copied successfully"
+            else
+                log_message "Warning: Failed to copy AutoHDR addon"
+            fi
         else
-            log_message "Warning: Failed to copy AutoHDR addon"
+            log_message "AutoHDR addon file not found: $autohdr_addon"
+        fi
+    else
+        log_message "Skipping AutoHDR addon installation for API: $dll_override"
+        # Remove any existing AutoHDR addon files if they exist from previous installations
+        if [ -f "$game_path/AutoHDR.addon${arch}" ]; then
+            log_message "Removing existing AutoHDR addon (incompatible with $dll_override)"
+            rm -f "$game_path/AutoHDR.addon${arch}"
         fi
     fi
     
@@ -429,6 +521,22 @@ EOF
     # Create README file for Steam games
     local readme_file="$game_path/ReShade_README.txt"
     local game_name=$(basename "$(dirname "$game_path")" 2>/dev/null || basename "$game_path")
+    
+    # Check if AutoHDR was actually installed
+    local autohdr_status=""
+    if [ -f "$game_path/AutoHDR.addon${arch}" ]; then
+        autohdr_status="- AutoHDR.addon$arch: AutoHDR addon (DirectX 10/11/12 compatible)"
+    else
+        case "$dll_override" in
+            "dxgi"|"d3d11"|"d3d12")
+                autohdr_status="- AutoHDR.addon$arch: Not installed (AutoHDR addon file missing)"
+                ;;
+            *)
+                autohdr_status="- AutoHDR.addon$arch: Not compatible with $dll_override (requires DirectX 10/11/12)"
+                ;;
+        esac
+    fi
+    
     cat > "$readme_file" << EOF
 ReShade for $game_name
 ------------------------------------
@@ -456,9 +564,14 @@ Files created:
 - $dll_override.dll: ReShade DLL (symlinked)
 - d3dcompiler_47.dll: DirectX shader compiler (symlinked)
 - ReShade_shaders/: Shader files directory (symlinked)
-- AutoHDR.addon$arch: AutoHDR addon (if available)
+$autohdr_status
 
 Detection Method: $([ ! -z "$exact_exe_path" ] && echo "Steam Console Logs" || echo "Enhanced File Analysis")
+
+AutoHDR Compatibility:
+- Compatible APIs: DXGI, D3D11, D3D12 (DirectX 10/11/12)
+- Incompatible APIs: D3D9, D3D8, OpenGL32, DDraw, DInput8
+- Current API: $dll_override $(case "$dll_override" in "dxgi"|"d3d11"|"d3d12") echo "(✅ AutoHDR Compatible)";; *) echo "(❌ AutoHDR Incompatible)";; esac)
 
 Note: If ReShadePreset.ini already existed, your previous settings were preserved.
 EOF
@@ -604,19 +717,34 @@ main() {
 
     case $action in
         "install")
-            # Use enhanced detection method
+            # Use enhanced detection method with proper error handling
             local detection_result
             detection_result=$(detect_game_arch_and_api_enhanced "$game_path")
+            
+            if [ -z "$detection_result" ]; then
+                log_message "Error: Enhanced detection returned empty result"
+                echo "Error: Could not detect game architecture or API" >&2
+                exit 1
+            fi
+            
             local arch
             local detected_api
             arch=$(echo "$detection_result" | cut -d',' -f1)
             detected_api=$(echo "$detection_result" | cut -d',' -f2)
             
-            # FIXED: Clean variable validation
-            if [ -z "$arch" ] || [ -z "$detected_api" ]; then
-                log_message "Error: Detection failed to return valid results"
-                echo "Error: Could not detect game architecture or API" >&2
-                exit 1
+            # FIXED: Clean variable validation with fallback
+            if [ -z "$arch" ] || [[ ! "$arch" =~ ^(32|64)$ ]]; then
+                log_message "Error: Invalid architecture detected: '$arch'. Falling back to 64-bit"
+                arch="64"
+            fi
+            
+            if [ -z "$detected_api" ]; then
+                log_message "Error: No API detected. Falling back to default based on architecture"
+                if [ "$arch" = "32" ]; then
+                    detected_api="d3d9"
+                else
+                    detected_api="dxgi"
+                fi
             fi
             
             log_message "Parsed detection result - Architecture: $arch, API: $detected_api"
@@ -627,11 +755,24 @@ main() {
                 log_message "Auto-detection selected API: $dll_override"
             fi
             
-            # FIXED: Validate dll_override is clean
-            if [ -z "$dll_override" ]; then
-                log_message "Error: DLL override is empty after processing"
-                echo "Error: Invalid DLL override" >&2
-                exit 1
+            # FIXED: Validate dll_override is clean and supported
+            local valid_apis=("d3d8" "d3d9" "d3d11" "d3d12" "dxgi" "opengl32" "ddraw" "dinput8")
+            local api_valid=false
+            for valid_api in "${valid_apis[@]}"; do
+                if [ "$dll_override" = "$valid_api" ]; then
+                    api_valid=true
+                    break
+                fi
+            done
+            
+            if [ "$api_valid" = false ]; then
+                log_message "Error: Invalid API selected: '$dll_override'. Falling back to default"
+                if [ "$arch" = "32" ]; then
+                    dll_override="d3d9"
+                else
+                    dll_override="dxgi"
+                fi
+                log_message "Using fallback API: $dll_override"
             fi
             
             log_message "Setting executable permissions for game directory"
@@ -641,9 +782,24 @@ main() {
                 # Update the WINEDLLOVERRIDES based on detected API
                 local override_cmd="WINEDLLOVERRIDES=\"d3dcompiler_47=n;${dll_override}=n,b\" %command%"
                 echo "Successfully installed ReShade using enhanced detection"
-                if [ -f "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon$arch" ]; then
-                    echo "AutoHDR components included (requires DirectX 10/11/12 games)"
+                
+                # Check if AutoHDR was installed based on API compatibility
+                local autohdr_message=""
+                case "$dll_override" in
+                    "dxgi"|"d3d11"|"d3d12")
+                        if [ -f "$MAIN_PATH/AutoHDR_addons/AutoHDR.addon$arch" ]; then
+                            autohdr_message="AutoHDR components included (DirectX 10/11/12 detected)"
+                        fi
+                        ;;
+                    *)
+                        autohdr_message="AutoHDR not included (requires DirectX 10/11/12, detected: ${dll_override})"
+                        ;;
+                esac
+                
+                if [ ! -z "$autohdr_message" ]; then
+                    echo "$autohdr_message"
                 fi
+                
                 echo "Detected architecture: $arch-bit"
                 echo "Selected API: $dll_override"
                 echo "Use this launch option: $override_cmd"
