@@ -173,22 +173,39 @@ detect_game_arch_and_api_enhanced() {
     if [ ! -z "$best_exe" ]; then
         log_message "Selected best executable: $best_exe (score: $best_score)"
         
-        # Check architecture of the selected executable
-        local file_info=$(file "$best_exe" 2>/dev/null)
+        # Check architecture of the selected executable - FIXED VARIABLE SCOPE
+        local file_info
+        file_info=$(file "$best_exe" 2>/dev/null)
         log_message "File info for selected executable: $file_info"
         
-        if echo "$file_info" | grep -Eq "x86-64|PE32\+"; then
+        # FIXED: Reset variables to ensure clean state
+        arch="64"  # Reset to default
+        detected_api="dxgi"  # Reset to default
+        
+        # FIXED: More precise matching to avoid variable contamination
+        if echo "$file_info" | grep -q "x86-64"; then
             arch="64"
             detected_api="dxgi"
-            log_message "Detected 64-bit executable, using DXGI"
-        elif echo "$file_info" | grep -E "PE32 executable" | grep -v "PE32+"; then
+            log_message "Detected 64-bit executable (x86-64), using DXGI"
+        elif echo "$file_info" | grep -q "PE32+"; then
+            arch="64"
+            detected_api="dxgi"
+            log_message "Detected 64-bit executable (PE32+), using DXGI"
+        elif echo "$file_info" | grep -q "PE32 executable" && ! echo "$file_info" | grep -q "PE32+"; then
             arch="32"
             detected_api="d3d9"
-            log_message "Detected 32-bit executable, using D3D9"
+            log_message "Detected 32-bit executable (PE32), using D3D9"
+        elif echo "$file_info" | grep -q "Intel i386"; then
+            arch="32"
+            detected_api="d3d9"
+            log_message "Detected 32-bit executable (i386), using D3D9"
+        else
+            log_message "Could not determine architecture from file info, using defaults"
         fi
         
         # Check for API-specific DLLs in the executable directory
-        local exe_dir=$(dirname "$best_exe")
+        local exe_dir
+        exe_dir=$(dirname "$best_exe")
         
         if [ -f "$exe_dir/d3d9.dll" ]; then
             detected_api="d3d9"
@@ -209,6 +226,7 @@ detect_game_arch_and_api_enhanced() {
     fi
     
     log_message "Final detection result - Architecture: $arch, API: $detected_api"
+    # FIXED: Ensure we only return clean values
     echo "${arch},${detected_api}"
 }
 
@@ -264,13 +282,24 @@ setup_game_reshade() {
     local game_path="$1"
     local dll_override="$2"
     local arch="$3"
-    local appid="$4"  # New parameter for app ID
+    local appid="$4"
     
     log_message "Setting up ReShade:"
     log_message "Game path: $game_path"
     log_message "DLL override: $dll_override"
     log_message "Architecture: $arch-bit"
     log_message "App ID: $appid"
+    
+    # FIXED: Validate and sanitize input parameters
+    if [ -z "$arch" ] || [[ ! "$arch" =~ ^(32|64)$ ]]; then
+        log_message "Error: Invalid architecture: '$arch'. Must be '32' or '64'"
+        return 1
+    fi
+    
+    if [ -z "$dll_override" ]; then
+        log_message "Error: DLL override is empty"
+        return 1
+    fi
     
     # NEW: Try to get exact executable path from Steam logs first
     local exact_exe_path=""
@@ -292,10 +321,11 @@ setup_game_reshade() {
         return 1
     fi
     
-    # Check ReShade DLL
+    # Check ReShade DLL with clean architecture value
     local reshade_dll="ReShade${arch}.dll"
     if [ ! -f "$RESHADE_PATH/latest/$reshade_dll" ]; then
         log_message "Error: Required ReShade DLL not found: $reshade_dll"
+        log_message "Looking for: $RESHADE_PATH/latest/$reshade_dll"
         return 1
     fi
 
@@ -303,6 +333,7 @@ setup_game_reshade() {
     local d3dcompiler="$RESHADE_PATH/d3dcompiler_47.dll.${arch}"
     if [ ! -f "$d3dcompiler" ]; then
         log_message "Error: d3dcompiler_47.dll not found for $arch-bit"
+        log_message "Looking for: $d3dcompiler"
         return 1
     fi
 
@@ -532,7 +563,7 @@ main() {
     local dll_override="${3:-dxgi}"
     local vulkan_mode="$4"
     local wineprefix="$5"
-    local appid="$6"  # New parameter for Steam App ID
+    local appid="$6"  # App ID parameter
     
     log_message "Starting enhanced game manager with:"
     log_message "Action: $action"
@@ -556,8 +587,10 @@ main() {
         fi
         
         # Use enhanced detection for Vulkan mode too
-        local detection_result=$(detect_game_arch_and_api_enhanced "$game_path")
-        local arch=$(echo "$detection_result" | cut -d',' -f1)
+        local detection_result
+        detection_result=$(detect_game_arch_and_api_enhanced "$game_path")
+        local arch
+        arch=$(echo "$detection_result" | cut -d',' -f1)
         setup_vulkan_support "$wineprefix" "$arch" "$action"
         exit $?
     fi
@@ -572,14 +605,33 @@ main() {
     case $action in
         "install")
             # Use enhanced detection method
-            local detection_result=$(detect_game_arch_and_api_enhanced "$game_path")
-            local arch=$(echo "$detection_result" | cut -d',' -f1)
-            local detected_api=$(echo "$detection_result" | cut -d',' -f2)
+            local detection_result
+            detection_result=$(detect_game_arch_and_api_enhanced "$game_path")
+            local arch
+            local detected_api
+            arch=$(echo "$detection_result" | cut -d',' -f1)
+            detected_api=$(echo "$detection_result" | cut -d',' -f2)
+            
+            # FIXED: Clean variable validation
+            if [ -z "$arch" ] || [ -z "$detected_api" ]; then
+                log_message "Error: Detection failed to return valid results"
+                echo "Error: Could not detect game architecture or API" >&2
+                exit 1
+            fi
+            
+            log_message "Parsed detection result - Architecture: $arch, API: $detected_api"
             
             # Use detected API when auto-detection is requested
             if [ "$dll_override" = "auto" ]; then
                 dll_override="$detected_api"
                 log_message "Auto-detection selected API: $dll_override"
+            fi
+            
+            # FIXED: Validate dll_override is clean
+            if [ -z "$dll_override" ]; then
+                log_message "Error: DLL override is empty after processing"
+                echo "Error: Invalid DLL override" >&2
+                exit 1
             fi
             
             log_message "Setting executable permissions for game directory"
