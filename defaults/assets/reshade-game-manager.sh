@@ -6,6 +6,8 @@ XDG_DATA_HOME=${XDG_DATA_HOME:-"$HOME/.local/share"}
 MAIN_PATH=${MAIN_PATH:-"$XDG_DATA_HOME/reshade"}
 RESHADE_PATH="$MAIN_PATH/reshade"
 WINE_MAIN_PATH="$(echo "$MAIN_PATH" | sed "s#/home/$USER/##" | sed 's#/#\\\\#g')"
+UPDATE_RESHADE=${UPDATE_RESHADE:-1}
+MERGE_SHADERS=${MERGE_SHADERS:-1}
 VULKAN_SUPPORT=${VULKAN_SUPPORT:-0}
 GLOBAL_INI=${GLOBAL_INI:-"ReShade.ini"}
 DELETE_RESHADE_FILES=${DELETE_RESHADE_FILES:-0}
@@ -292,54 +294,6 @@ detect_game_arch_and_api_enhanced() {
     echo "${arch},${detected_api}"
 }
 
-# Original detection function (kept as fallback)
-detect_game_arch_and_api() {
-    local game_path="$1"
-    local arch="32"
-    local detected_api="d3d9"
-    
-    log_message "Analyzing game directory: $game_path"
-    
-    # Find all exe files in root directory
-    local exes=()
-    while IFS= read -r -d '' exe; do
-        exes+=("$exe")
-    done < <(find "$game_path" -maxdepth 1 -name "*.exe" -print0)
-    
-    for exe in "${exes[@]}"; do
-        log_message "Checking EXE: $exe"
-        
-        # Skip launchers and utilities
-        if [[ "$exe" =~ [Ll]auncher|[Cc]rash|[Ss]etup|[Uu]nins|[Rr]edist ]]; then
-            log_message "Skipping utility executable: $exe"
-            continue
-        fi
-        
-        # Get file info
-        local file_info=$(file "$exe")
-        log_message "File info: $file_info"
-        
-        # Check for 64-bit (PE32+ or x86-64)
-        if echo "$file_info" | grep -Eq "x86-64|PE32\+"; then
-            log_message "Detected 64-bit executable: $exe"
-            arch="64"
-            detected_api="dxgi"
-            break
-        fi
-    done
-
-    # Secondary check for common DLLs
-    if [[ "$arch" == "64" ]]; then
-        [[ -f "$game_path/dxgi.dll" || -f "$game_path/d3d11.dll" ]] && detected_api="dxgi"
-        [[ -f "$game_path/d3d9.dll" ]] && detected_api="d3d9"
-    else
-        [[ -f "$game_path/d3d9.dll" ]] && detected_api="d3d9"
-        [[ -f "$game_path/d3d11.dll" ]] && detected_api="d3d11"
-    fi
-
-    echo "${arch},${detected_api}"
-}
-
 setup_game_reshade() {
     local game_path="$1"
     local dll_override="$2"
@@ -363,9 +317,9 @@ setup_game_reshade() {
         return 1
     fi
     
-    # NEW: Try to get exact executable path from Steam logs first
+    # NEW: Try to get exact executable path from Steam logs first (only if appid is provided and not empty)
     local exact_exe_path=""
-    if [ ! -z "$appid" ] && [ "$appid" != "" ]; then
+    if [ ! -z "$appid" ] && [ "$appid" != "" ] && [ "$appid" != " " ]; then
         log_message "Attempting Steam logs method with App ID: $appid"
         exact_exe_path=$(parse_steam_logs_for_executable "$appid")
         if [ ! -z "$exact_exe_path" ] && [ -f "$exact_exe_path" ]; then
@@ -377,7 +331,7 @@ setup_game_reshade() {
             log_message "Steam logs method failed or returned invalid path, using provided game path: $game_path"
         fi
     else
-        log_message "No App ID provided, skipping Steam logs method"
+        log_message "No App ID provided or user-selected path - respecting provided game path: $game_path"
     fi
     
     # Verify ReShade installation
@@ -566,7 +520,7 @@ Files created:
 - ReShade_shaders/: Shader files directory (symlinked)
 $autohdr_status
 
-Detection Method: $([ ! -z "$exact_exe_path" ] && echo "Steam Console Logs" || echo "Enhanced File Analysis")
+Detection Method: $([ ! -z "$exact_exe_path" ] && echo "Steam Console Logs" || echo "Enhanced File Analysis / User Selected")
 
 AutoHDR Compatibility:
 - Compatible APIs: DXGI, D3D11, D3D12 (DirectX 10/11/12)

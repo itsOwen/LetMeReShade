@@ -144,6 +144,8 @@ class Plugin:
                     "status": "success",
                     "method": "steam_logs",
                     "executable_path": executable_path,
+                    "directory_path": os.path.dirname(executable_path),
+                    "filename": os.path.basename(executable_path),
                     "launch_command": launch_command,
                     "timestamp": time.time()
                 }
@@ -171,16 +173,46 @@ class Plugin:
         try:
             decky.logger.info(f"Enhanced executable detection for App ID: {appid}")
             
-            # Get the base game path using existing method
+            # Get the base game path using existing method - but use the BASE path, not the detected exe path
             try:
-                base_game_path = self._find_game_path(appid)
-                decky.logger.info(f"Base game path: {base_game_path}")
-            except ValueError as e:
+                # Get the raw base game installation path
+                steam_root = Path(decky.HOME) / ".steam" / "steam"
+                library_file = steam_root / "steamapps" / "libraryfolders.vdf"
+
+                if not library_file.exists():
+                    return {"status": "error", "message": "Steam library file not found"}
+
+                library_paths = []
+                with open(library_file, "r", encoding="utf-8") as file:
+                    for line in file:
+                        if '"path"' in line:
+                            path = line.split('"path"')[1].strip().strip('"').replace("\\\\", "/")
+                            library_paths.append(path)
+
+                base_game_path = None
+                for library_path in library_paths:
+                    manifest_path = Path(library_path) / "steamapps" / f"appmanifest_{appid}.acf"
+                    if manifest_path.exists():
+                        with open(manifest_path, "r", encoding="utf-8") as manifest:
+                            for line in manifest:
+                                if '"installdir"' in line:
+                                    install_dir = line.split('"installdir"')[1].strip().strip('"')
+                                    base_game_path = str(Path(library_path) / "steamapps" / "common" / install_dir)
+                                    break
+                        break
+
+                if not base_game_path:
+                    return {"status": "error", "message": f"Could not find installation directory for AppID: {appid}"}
+                    
+                decky.logger.info(f"Base game path for detection: {base_game_path}")
+                
+            except Exception as e:
                 return {"status": "error", "message": str(e)}
             
             # Find all executables in the game directory
             all_executables = []
             
+            decky.logger.info(f"Walking directory tree starting from: {base_game_path}")
             for root, dirs, files in os.walk(base_game_path):
                 for file in files:
                     if file.lower().endswith('.exe'):
@@ -191,11 +223,13 @@ class Plugin:
                             
                             all_executables.append({
                                 "path": exe_path,
+                                "directory_path": os.path.dirname(exe_path),
                                 "relative_path": rel_path,
                                 "filename": file,
                                 "size": file_size,
                                 "size_mb": round(file_size / (1024 * 1024), 1)
                             })
+                            decky.logger.debug(f"Found exe: {file} ({rel_path}) - {round(file_size / (1024 * 1024), 1)}MB")
                         except Exception as e:
                             decky.logger.warning(f"Error getting size for {exe_path}: {str(e)}")
                             continue
@@ -204,92 +238,125 @@ class Plugin:
                 return {
                     "status": "error",
                     "method": "enhanced_detection",
-                    "message": "No executables found in game directory"
+                    "message": f"No executables found in game directory: {base_game_path}"
                 }
             
-            decky.logger.info(f"Found {len(all_executables)} executables")
+            decky.logger.info(f"Found {len(all_executables)} total executables")
             
             # Enhanced filtering based on discovered patterns
             def score_executable(exe_info):
-                score = 0
+                score = 50  # Start with a base score instead of 0
                 filename = exe_info["filename"].lower()
                 rel_path = exe_info["relative_path"].lower()
                 size_mb = exe_info["size_mb"]
                 
-                # Skip obvious utility files
-                if any(skip in filename for skip in [
-                    "unins", "setup", "install", "redist", "prereq", 
-                    "crash", "launcher", "updater", "patcher"
-                ]):
-                    return -1000  # Heavily penalize utilities
+                decky.logger.debug(f"Scoring {filename} at {rel_path}")
                 
-                # Size-based scoring (larger = more likely to be main game)
+                # LESS aggressive utility filtering - only skip very obvious ones
+                utility_keywords = ["unins", "setup", "vcredist", "directx", "redist"]
+                if any(skip in filename for skip in utility_keywords):
+                    decky.logger.debug(f"  Utility file detected: {filename}")
+                    return 0  # Set to 0 instead of negative
+                
+                # Size-based scoring (more moderate)
                 if size_mb > 50:      # Large games
-                    score += 100
+                    score += 35
                 elif size_mb > 20:    # Medium games  
-                    score += 50
-                elif size_mb > 5:     # Small games
-                    score += 20
-                elif size_mb < 1:     # Very small files (likely utilities)
-                    score -= 50
-                
-                # Path-based scoring (discovered patterns)
-                if "binaries/win64" in rel_path:    # Unreal Engine pattern
-                    score += 30
-                elif "bin" in rel_path:             # Common bin directory
-                    score += 20
-                elif "\\" not in rel_path and "/" not in rel_path:  # Root directory
-                    score += 10
-                
-                # Filename-based scoring
-                if any(good in filename for good in [
-                    "game", "main", "client", "app", ".exe"
-                ]):
-                    score += 15
-                
-                # Special patterns from real data
-                if "shipping" in filename:          # Unreal shipping builds
                     score += 25
-                elif "win64" in filename:           # 64-bit indicator
+                elif size_mb > 5:     # Small games
+                    score += 15
+                elif size_mb > 1:     # Small but not tiny
+                    score += 5
+                elif size_mb < 0.5:   # Very small files (likely utilities)
+                    score -= 20
+                
+                # Path-based scoring (more moderate)
+                if "binaries/win64" in rel_path or "binaries\\win64" in rel_path:    # Unreal Engine pattern
+                    score += 25
+                elif "bin" in rel_path:             # Common bin directory
+                    score += 15
+                elif "game" in rel_path:            # Game subdirectory
                     score += 10
+                elif rel_path.count("/") == 0 and rel_path.count("\\") == 0:  # Root directory
+                    score += 8
                 
-                # Penalty for deep nesting (utilities often deeply nested)
+                # Filename-based scoring (more moderate)
+                if any(good in filename for good in [
+                    "game", "main", "client", "app"
+                ]):
+                    score += 12
+                
+                # Special patterns from real data (more moderate)
+                if "shipping" in filename:          # Unreal shipping builds
+                    score += 20
+                elif "win64" in filename:           # 64-bit indicator
+                    score += 8
+                elif "launcher" in filename:        # Launchers (lower score but don't exclude)
+                    score -= 15
+                
+                # Moderate penalty for deep nesting
                 path_depth = rel_path.count("/") + rel_path.count("\\")
-                if path_depth > 3:
-                    score -= path_depth * 5
+                if path_depth > 4:  # Increased threshold
+                    score -= (path_depth - 4) * 3
                 
+                # Cap score between 0 and 100
+                score = max(0, min(100, score))
+                
+                decky.logger.debug(f"  Final score for {filename}: {score}")
                 return score
             
-            # Score all executables
+            # Score all executables - use much lower threshold
             scored_executables = []
             for exe_info in all_executables:
                 score = score_executable(exe_info)
-                if score > -500:  # Only include non-utility files
+                # Much more permissive threshold - only exclude very obvious utilities
+                if score > 0:  # Changed from -50 to 0 for 0-100 scale
                     scored_executables.append({
                         **exe_info,
                         "score": score
                     })
+                else:
+                    decky.logger.debug(f"Filtered out {exe_info['filename']} with score {score}")
             
             if not scored_executables:
-                return {
-                    "status": "error", 
-                    "method": "enhanced_detection",
-                    "message": "No suitable executables found after filtering"
-                }
+                # If we filtered everything out, include everything with any positive score
+                decky.logger.warning("All executables filtered out, using less restrictive filtering")
+                for exe_info in all_executables:
+                    score = score_executable(exe_info)
+                    if score >= 0:  # Even more permissive
+                        scored_executables.append({
+                            **exe_info,
+                            "score": score
+                        })
             
-            # Sort by score (highest first)
+            if not scored_executables:
+                # Last resort: include everything
+                decky.logger.warning("Still no executables, including all found")
+                for exe_info in all_executables:
+                    scored_executables.append({
+                        **exe_info,
+                        "score": score_executable(exe_info)
+                    })
+            
+            # Sort by score (highest first) and take top 5
             scored_executables.sort(key=lambda x: x["score"], reverse=True)
+            top_executables = scored_executables[:5]
             
-            best_executable = scored_executables[0]
+            best_executable = top_executables[0]
             
-            decky.logger.info(f"Selected executable: {best_executable['relative_path']} (score: {best_executable['score']})")
+            decky.logger.info(f"Total executables after filtering: {len(scored_executables)}")
+            decky.logger.info(f"Top 5 executables:")
+            for i, exe in enumerate(top_executables):
+                decky.logger.info(f"  {i+1}. {exe['filename']} (score: {exe['score']}) at {exe['relative_path']}")
             
             return {
                 "status": "success",
                 "method": "enhanced_detection", 
                 "executable_path": best_executable["path"],
-                "all_executables": scored_executables[:5],  # Top 5 for debugging
-                "confidence": "high" if best_executable["score"] > 50 else "medium"
+                "directory_path": best_executable["directory_path"],
+                "filename": best_executable["filename"],
+                "all_executables": top_executables,  # Top 5 for UI
+                "confidence": "high" if best_executable["score"] > 100 else "medium"
             }
             
         except Exception as e:
@@ -302,31 +369,27 @@ class Plugin:
 
     async def find_game_executable_path(self, appid: str) -> dict:
         """
-        Primary method that tries Steam logs first, then enhanced detection as fallback
+        Primary method that runs BOTH Steam logs and enhanced detection, returning both results
         """
         try:
             decky.logger.info(f"Finding executable path for App ID: {appid}")
             
-            # Method 1: Try Steam console logs (primary)
-            log_result = await self.parse_steam_logs_for_executable(appid)
+            # Method 1: Steam console logs
+            steam_logs_result = await self.parse_steam_logs_for_executable(appid)
             
-            if log_result["status"] == "success":
-                decky.logger.info(f"Successfully found executable via Steam logs: {log_result['executable_path']}")
-                return log_result
-            
-            decky.logger.info("Steam logs method failed, trying enhanced detection...")
-            
-            # Method 2: Enhanced detection (fallback)
+            # Method 2: Enhanced detection (always run now)
             enhanced_result = await self.find_game_executable_enhanced(appid)
             
-            if enhanced_result["status"] == "success":
-                decky.logger.info(f"Successfully found executable via enhanced detection: {enhanced_result['executable_path']}")
-                return enhanced_result
+            # Determine recommended method
+            recommended_method = "steam_logs"
+            if steam_logs_result["status"] != "success":
+                recommended_method = "enhanced_detection"
             
-            # Both methods failed
             return {
-                "status": "error",
-                "message": f"Could not find executable. Logs: {log_result.get('message', 'failed')}, Enhanced: {enhanced_result.get('message', 'failed')}"
+                "status": "success",
+                "steam_logs_result": steam_logs_result,
+                "enhanced_detection_result": enhanced_result,
+                "recommended_method": recommended_method
             }
             
         except Exception as e:
@@ -1133,15 +1196,21 @@ class Plugin:
             decky.logger.error(f"Error detecting Linux game: {str(e)}")
             return {"status": "error", "message": str(e)}
 
-    async def manage_game_reshade(self, appid: str, action: str, dll_override: str = "dxgi", vulkan_mode: str = "") -> dict:
+    async def manage_game_reshade(self, appid: str, action: str, dll_override: str = "dxgi", vulkan_mode: str = "", selected_executable_path: str = "") -> dict:
         try:
             assets_dir = self._get_assets_dir()
             script_path = assets_dir / "reshade-game-manager.sh"
             
+            # Track if user selected a specific executable path
+            using_user_selected_path = bool(selected_executable_path and os.path.exists(selected_executable_path))
+            
             try:
-                # FIXED: For install, always use the original game path and let Bash handle all detection
-                # This prevents double-detection issues and ensures consistency
-                if action == "install":
+                # Use selected executable path if provided, otherwise use detection
+                if using_user_selected_path:
+                    game_path = os.path.dirname(selected_executable_path)
+                    decky.logger.info(f"Using user-selected executable path: {selected_executable_path}")
+                    decky.logger.info(f"Installing ReShade to directory: {game_path}")
+                elif action == "install":
                     # Get the base game installation path (not executable-specific directory)
                     game_path = self._find_game_path(appid)
                     decky.logger.info(f"Using base game path for Bash detection: {game_path}")
@@ -1150,9 +1219,14 @@ class Plugin:
                     # Try to use our detection first, then fall back to base path
                     try:
                         exe_result = await self.find_game_executable_path(appid)
-                        if exe_result["status"] == "success":
-                            game_path = os.path.dirname(exe_result["executable_path"])
+                        if (exe_result["status"] == "success" and 
+                            exe_result.get("steam_logs_result", {}).get("status") == "success"):
+                            game_path = os.path.dirname(exe_result["steam_logs_result"]["executable_path"])
                             decky.logger.info(f"Using detected executable directory for uninstall: {game_path}")
+                        elif (exe_result["status"] == "success" and 
+                              exe_result.get("enhanced_detection_result", {}).get("status") == "success"):
+                            game_path = os.path.dirname(exe_result["enhanced_detection_result"]["executable_path"])
+                            decky.logger.info(f"Using enhanced detection directory for uninstall: {game_path}")
                         else:
                             game_path = self._find_game_path(appid)
                             decky.logger.info(f"Using base game path for uninstall: {game_path}")
@@ -1164,13 +1238,19 @@ class Plugin:
             except ValueError as e:
                 return {"status": "error", "message": str(e)}
 
-            # FIXED: Always include App ID - let Bash handle all detection logic
+            # Build command - if user selected a specific path, don't pass appid to prevent bash script from overriding
             cmd = ["/bin/bash", str(script_path), action, game_path, dll_override]
             if vulkan_mode:
                 cmd.extend([vulkan_mode, os.path.expanduser(f"~/.local/share/Steam/steamapps/compatdata/{appid}"), appid])
             else:
-                # For non-Vulkan mode, add empty placeholders for vulkan_mode and wineprefix, then add appid
-                cmd.extend(["", "", appid])
+                # For non-Vulkan mode, add empty placeholders for vulkan_mode and wineprefix
+                if using_user_selected_path:
+                    # Don't pass appid when using user-selected path to prevent bash script from overriding
+                    cmd.extend(["", "", ""])
+                    decky.logger.info("Not passing App ID to bash script to prevent path override")
+                else:
+                    # Pass appid for automatic detection
+                    cmd.extend(["", "", appid])
             
             decky.logger.info(f"Executing command: {' '.join(cmd)}")
             
