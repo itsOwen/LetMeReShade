@@ -11,7 +11,7 @@ import {
 import { callable } from "@decky/api";
 
 // Import the callable functions
-const manageGameReShade = callable<[string, string, string], ReShadeResponse>("manage_game_reshade");
+const manageGameReShade = callable<[string, string, string, string, string], ReShadeResponse>("manage_game_reshade");
 const checkReShadePath = callable<[], PathCheckResponse>("check_reshade_path");
 const checkVkBasaltPath = callable<[], PathCheckResponse>("check_vkbasalt_path");
 const listInstalledGames = callable<[], GameListResponse>("list_installed_games");
@@ -55,12 +55,31 @@ interface LinuxGameDetectionResponse {
   message?: string;
 }
 
-interface ExecutableDetectionResponse {
+interface ExecutableInfo {
+  path: string;
+  directory_path: string;
+  filename: string;
+  relative_path?: string;
+  score?: number;
+  size_mb?: number;
+}
+
+interface DetectionResult {
   status: string;
   method?: string;
   executable_path?: string;
-  all_executables?: any[];
+  directory_path?: string;
+  filename?: string;
+  all_executables?: ExecutableInfo[];
   confidence?: string;
+  message?: string;
+}
+
+interface ExecutableDetectionResponse {
+  status: string;
+  steam_logs_result?: DetectionResult;
+  enhanced_detection_result?: DetectionResult;
+  recommended_method?: string;
   message?: string;
 }
 
@@ -74,6 +93,7 @@ const SteamGamesSection = () => {
   const [checkingLinuxGame, setCheckingLinuxGame] = useState<boolean>(false);
   const [executableDetection, setExecutableDetection] = useState<ExecutableDetectionResponse | null>(null);
   const [checkingExecutable, setCheckingExecutable] = useState<boolean>(false);
+  const [selectedExecutablePath, setSelectedExecutablePath] = useState<string>('');
 
   const dllOverrides: DllOverride[] = [
     { label: 'Automatic (Enhanced Detection)', value: 'auto' },
@@ -134,6 +154,7 @@ const SteamGamesSection = () => {
     const checkExecutableDetection = async () => {
       if (!selectedGame) {
         setExecutableDetection(null);
+        setSelectedExecutablePath('');
         return;
       }
 
@@ -141,9 +162,20 @@ const SteamGamesSection = () => {
         setCheckingExecutable(true);
         const detection = await findGameExecutablePath(selectedGame.appid);
         setExecutableDetection(detection);
+        
+        // Set default selected executable path based on recommended method
+        if (detection.status === "success") {
+          if (detection.recommended_method === "steam_logs" && 
+              detection.steam_logs_result?.status === "success") {
+            setSelectedExecutablePath(detection.steam_logs_result.executable_path || '');
+          } else if (detection.enhanced_detection_result?.status === "success") {
+            setSelectedExecutablePath(detection.enhanced_detection_result.executable_path || '');
+          }
+        }
       } catch (error) {
         await logError(`Executable detection error: ${String(error)}`);
         setExecutableDetection(null);
+        setSelectedExecutablePath('');
       } finally {
         setCheckingExecutable(false);
       }
@@ -217,16 +249,10 @@ const SteamGamesSection = () => {
       const getDetectionInfo = () => {
         let info = `Are you sure you want to patch ${selectedGame.name} with ${selectedDll.label}?`;
         
-        if (executableDetection && executableDetection.status === "success") {
-          info += `\n\nExecutable Detection:`;
-          info += `\n• Method: ${executableDetection.method === 'steam_logs' ? 'Steam Console Logs' : 'Enhanced File Analysis'}`;
-          if (executableDetection.executable_path) {
-            const fileName = executableDetection.executable_path.split('/').pop();
-            info += `\n• Found: ${fileName}`;
-          }
-          if (executableDetection.confidence) {
-            info += `\n• Confidence: ${executableDetection.confidence}`;
-          }
+        if (selectedExecutablePath) {
+          const fileName = selectedExecutablePath.split('/').pop();
+          info += `\n\nSelected executable: ${fileName}`;
+          info += `\nLocation: ${selectedExecutablePath}`;
         }
         
         return info;
@@ -244,7 +270,9 @@ const SteamGamesSection = () => {
             const response = await manageGameReShade(
               selectedGame.appid,
               "install",
-              dllValue
+              dllValue,
+              "",
+              selectedExecutablePath
             );
 
             if (response.status === "success") {
@@ -258,10 +286,9 @@ const SteamGamesSection = () => {
                   
                   let successMessage = `Successfully patched ${selectedGame.name}.\nDetected ${detectedApi.toUpperCase()} as the best API.\nPress HOME key in-game to open ReShade overlay.`;
                   
-                  // Add detection method info
-                  if (executableDetection && executableDetection.method) {
-                    const methodName = executableDetection.method === 'steam_logs' ? 'Steam Console Logs' : 'Enhanced File Analysis';
-                    successMessage += `\n\nDetection Method: ${methodName}`;
+                  if (selectedExecutablePath) {
+                    const fileName = selectedExecutablePath.split('/').pop();
+                    successMessage += `\n\nInstalled to: ${fileName}`;
                   }
                   
                   setResult(successMessage);
@@ -311,7 +338,9 @@ const SteamGamesSection = () => {
             const response = await manageGameReShade(
               selectedGame.appid,
               "uninstall",
-              selectedDll?.value || 'dxgi'
+              selectedDll?.value || 'dxgi',
+              "",
+              selectedExecutablePath
             );
 
             if (response.status === "success") {
@@ -391,54 +420,152 @@ const SteamGamesSection = () => {
     );
   };
 
-  const renderExecutableDetectionInfo = () => {
+  const renderExecutableSelection = () => {
     if (!executableDetection || executableDetection.status !== "success") return null;
 
-    const methodColor = executableDetection.method === 'steam_logs' ? "#4CAF50" : "#2196F3";
-    const methodIcon = executableDetection.method === 'steam_logs' ? "📋" : "🔍";
-    const methodName = executableDetection.method === 'steam_logs' ? 'Steam Console Logs' : 'Enhanced File Analysis';
-    const isEnhancedDetection = executableDetection.method !== 'steam_logs';
-    
+    const steamLogsResult = executableDetection.steam_logs_result;
+    const enhancedResult = executableDetection.enhanced_detection_result;
+    const recommendedMethod = executableDetection.recommended_method;
+
+    const executableOptions: Array<{
+      path: string;
+      filename: string;
+      method: string;
+      isRecommended: boolean;
+      score?: number;
+      relative_path?: string;
+      displayLabel: string;
+    }> = [];
+
+    // Add Steam logs result if available
+    if (steamLogsResult?.status === "success" && steamLogsResult.executable_path) {
+      const isRecommended = recommendedMethod === 'steam_logs';
+      executableOptions.push({
+        path: steamLogsResult.executable_path,
+        filename: steamLogsResult.filename || steamLogsResult.executable_path.split('/').pop() || 'Unknown',
+        method: 'Steam Console Logs',
+        isRecommended,
+        relative_path: 'Main directory',
+        displayLabel: `${steamLogsResult.filename || steamLogsResult.executable_path.split('/').pop()} ${isRecommended ? '(RECOMMENDED)' : ''} - Steam Logs`
+      });
+    }
+
+    // Add enhanced detection results if available
+    if (enhancedResult?.status === "success" && enhancedResult.all_executables) {
+      enhancedResult.all_executables.forEach((exe, index) => {
+        // Check for duplicates more carefully - compare just the filename to be safer
+        const steamLogsFilename = steamLogsResult?.filename || steamLogsResult?.executable_path?.split('/').pop();
+        const isDuplicate = steamLogsFilename && steamLogsFilename === exe.filename;
+        
+        if (!isDuplicate) {
+          const isRecommended = recommendedMethod === 'enhanced_detection' && exe.path === enhancedResult.executable_path;
+          executableOptions.push({
+            path: exe.path,
+            filename: exe.filename,
+            method: 'Enhanced Detection',
+            isRecommended,
+            score: exe.score,
+            relative_path: exe.relative_path || `Directory ${index + 1}`,
+            displayLabel: `${exe.filename} ${isRecommended ? '(RECOMMENDED)' : ''} - ${exe.relative_path || 'Enhanced'} (Score: ${exe.score || 0})`
+          });
+        }
+      });
+    }
+
+    // Debug: log what we found
+    console.log('Steam logs result:', steamLogsResult);
+    console.log('Enhanced result:', enhancedResult);
+    console.log('Final executable options:', executableOptions);
+
+    if (executableOptions.length === 0) return null;
+
     return (
       <>
         <PanelSectionRow>
           <div style={{
-            padding: '10px',
+            padding: '12px',
             marginTop: '8px',
-            backgroundColor: methodColor,
+            backgroundColor: 'var(--decky-highlighted-ui-bg)',
             borderRadius: '4px',
-            color: 'white',
-            fontSize: '0.9em'
+            border: '1px solid var(--decky-subtle-border)'
           }}>
-            <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
-              {methodIcon} Executable Detection: {methodName}
+            <div style={{ fontWeight: 'bold', marginBottom: '8px', fontSize: '0.95em' }}>
+              🎯 Executable Detection Results ({executableOptions.length} found)
             </div>
-            {executableDetection.executable_path && (
-              <div style={{ fontSize: '0.85em' }}>
-                Found: {executableDetection.executable_path.split('/').pop()}
-              </div>
-            )}
-            {executableDetection.confidence && (
-              <div style={{ fontSize: '0.85em' }}>
-                Confidence: {executableDetection.confidence}
-              </div>
-            )}
           </div>
         </PanelSectionRow>
         
-        {isEnhancedDetection && (
+        <PanelSectionRow>
+          <DropdownItem
+            rgOptions={executableOptions.map(option => ({
+              data: option.path,
+              label: option.displayLabel
+            }))}
+            selectedOption={selectedExecutablePath}
+            onChange={(option) => {
+              setSelectedExecutablePath(option.data);
+            }}
+            strDefaultLabel="Select executable location..."
+          />
+        </PanelSectionRow>
+
+        {/* Show details of currently selected executable */}
+        {selectedExecutablePath && (() => {
+          const selectedOption = executableOptions.find(opt => opt.path === selectedExecutablePath);
+          if (!selectedOption) return null;
+
+          return (
+            <PanelSectionRow>
+              <div style={{
+                padding: '8px',
+                backgroundColor: selectedOption.isRecommended ? 'rgba(76, 175, 80, 0.1)' : 'rgba(255, 255, 255, 0.05)',
+                borderRadius: '4px',
+                border: selectedOption.isRecommended ? '1px solid rgba(76, 175, 80, 0.3)' : '1px solid rgba(255, 255, 255, 0.1)',
+                fontSize: '0.85em'
+              }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+                  Selected: {selectedOption.filename}
+                  {selectedOption.isRecommended && (
+                    <span style={{
+                      backgroundColor: '#4CAF50',
+                      color: 'white',
+                      padding: '2px 6px',
+                      borderRadius: '3px',
+                      fontSize: '0.8em',
+                      fontWeight: 'normal',
+                      marginLeft: '8px'
+                    }}>
+                      RECOMMENDED
+                    </span>
+                  )}
+                </div>
+                <div style={{ opacity: 0.8, marginBottom: '2px' }}>
+                  Method: {selectedOption.method}
+                  {selectedOption.score !== undefined && (
+                    <span style={{ marginLeft: '8px' }}>
+                      (Score: {selectedOption.score})
+                    </span>
+                  )}
+                </div>
+                <div style={{ opacity: 0.7, fontSize: '0.8em', wordBreak: 'break-all' }}>
+                  Path: {selectedOption.relative_path}
+                </div>
+              </div>
+            </PanelSectionRow>
+          );
+        })()}
+        
+        {steamLogsResult?.status !== "success" && (
           <PanelSectionRow>
             <div style={{
               padding: '8px',
-              marginTop: '4px',
-              backgroundColor: 'var(--decky-highlighted-ui-bg)',
+              backgroundColor: 'rgba(33, 150, 243, 0.1)',
               borderRadius: '4px',
-              fontSize: '0.85em',
-              opacity: 0.9,
-              border: '1px solid var(--decky-subtle-border)'
+              border: '1px solid rgba(33, 150, 243, 0.3)',
+              fontSize: '0.85em'
             }}>
               <div style={{ marginBottom: '4px', fontWeight: 'bold' }}>
-                💡 Want full confidence detection?
+                💡 Want Steam Console Logs detection?
               </div>
               <div>
                 Launch {selectedGame?.name} once, then close it and try again. 
@@ -483,7 +610,7 @@ const SteamGamesSection = () => {
           )}
 
           {renderLinuxGameWarning()}
-          {renderExecutableDetectionInfo()}
+          {renderExecutableSelection()}
 
           {selectedGame && (
             <PanelSectionRow>
