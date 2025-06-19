@@ -42,13 +42,41 @@ interface PathCheckResponse {
   is_addon: boolean;
 }
 
+interface ExecutableInfo {
+  path: string;
+  directory_path: string;
+  filename: string;
+  relative_path?: string;
+  score?: number;
+  size_mb?: number;
+}
+
+interface DetectionResult {
+  status: string;
+  method?: string;
+  executable_path?: string;
+  directory_path?: string;
+  filename?: string;
+  all_executables?: ExecutableInfo[];
+  confidence?: string;
+  message?: string;
+}
+
+interface HeroicExecutableDetectionResponse {
+  status: string;
+  heroic_enhanced_detection_result?: DetectionResult;
+  recommended_method?: string;
+  message?: string;
+}
+
 // Define callables
 const findHeroicGames = callable<[], HeroicResponse>("find_heroic_games");
-const installReshadeForHeroicGame = callable<[string, string], HeroicResponse>("install_reshade_for_heroic_game");
+const installReshadeForHeroicGame = callable<[string, string, string], HeroicResponse>("install_reshade_for_heroic_game");
 const uninstallReshadeForHeroicGame = callable<[string], HeroicResponse>("uninstall_reshade_for_heroic_game");
 const updateHeroicConfig = callable<[string, string, string], HeroicResponse>("update_heroic_config");
 const findHeroicGameConfig = callable<[string, string], HeroicResponse>("find_heroic_game_config");
 const detectHeroicGameApi = callable<[string], HeroicResponse>("detect_heroic_game_api");
+const findHeroicGameExecutablePath = callable<[string, string], HeroicExecutableDetectionResponse>("find_heroic_game_executable_path");
 const checkReShadePath = callable<[], PathCheckResponse>("check_reshade_path");
 const logError = callable<[string], void>("log_error");
 
@@ -59,6 +87,9 @@ const HeroicGamesSection = () => {
   const [result, setResult] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
   const [apiDetecting, setApiDetecting] = useState<boolean>(false);
+  const [executableDetection, setExecutableDetection] = useState<HeroicExecutableDetectionResponse | null>(null);
+  const [checkingExecutable, setCheckingExecutable] = useState<boolean>(false);
+  const [selectedExecutablePath, setSelectedExecutablePath] = useState<string>('');
 
   const dllOverrides: DllOverride[] = [
     { label: 'Automatic (Detect API)', value: 'auto' },
@@ -91,6 +122,36 @@ const HeroicGamesSection = () => {
     
     loadHeroicGames();
   }, []);
+
+  // Check executable detection when a game is selected
+  useEffect(() => {
+    const checkExecutableDetection = async () => {
+      if (!selectedGame) {
+        setExecutableDetection(null);
+        setSelectedExecutablePath('');
+        return;
+      }
+
+      try {
+        setCheckingExecutable(true);
+        const detection = await findHeroicGameExecutablePath(selectedGame.path, selectedGame.name);
+        setExecutableDetection(detection);
+        
+        // Set default selected executable path based on recommended method
+        if (detection.status === "success" && detection.heroic_enhanced_detection_result?.status === "success") {
+          setSelectedExecutablePath(detection.heroic_enhanced_detection_result.executable_path || '');
+        }
+      } catch (error) {
+        await logError(`Heroic executable detection error: ${String(error)}`);
+        setExecutableDetection(null);
+        setSelectedExecutablePath('');
+      } finally {
+        setCheckingExecutable(false);
+      }
+    };
+
+    checkExecutableDetection();
+  }, [selectedGame]);
 
   const handleInstallReShade = async () => {
     if (!selectedGame) {
@@ -128,19 +189,33 @@ const HeroicGamesSection = () => {
         setApiDetecting(false);
       }
 
+      // Create enhanced confirmation dialog with detection info
+      const getDetectionInfo = () => {
+        let info = `Are you sure you want to install ReShade for ${selectedGame.name} with ${finalDllOverride.toUpperCase()} API?`;
+        
+        if (selectedExecutablePath) {
+          const fileName = selectedExecutablePath.split('/').pop();
+          info += `\n\nSelected executable: ${fileName}`;
+          info += `\nLocation: ${selectedExecutablePath}`;
+        }
+        
+        return info;
+      };
+
       showModal(
         <ConfirmModal
           strTitle="Confirm Heroic Game Patch"
-          strDescription={`Are you sure you want to install ReShade for ${selectedGame.name} with ${finalDllOverride.toUpperCase()} API?`}
+          strDescription={getDetectionInfo()}
           strOKButtonText="Install"
           strCancelButtonText="Cancel"
           onOK={async () => {
             setResult('Installing ReShade...');
             
-            // Install ReShade files
+            // Install ReShade files with selected executable path
             const installResponse = await installReshadeForHeroicGame(
               selectedGame.path,
-              finalDllOverride
+              finalDllOverride,
+              selectedExecutablePath
             );
             
             if (installResponse.status !== "success") {
@@ -160,7 +235,14 @@ const HeroicGamesSection = () => {
               
               if (configResponse.status === "success") {
                 configFound = true;
-                setResult(`ReShade installed successfully for ${selectedGame.name} with ${finalDllOverride.toUpperCase()} API.\nHeroic configuration has been updated. Press HOME key in-game to open ReShade overlay.`);
+                let successMessage = `ReShade installed successfully for ${selectedGame.name} with ${finalDllOverride.toUpperCase()} API.\nHeroic configuration has been updated. Press HOME key in-game to open ReShade overlay.`;
+                
+                if (selectedExecutablePath) {
+                  const fileName = selectedExecutablePath.split('/').pop();
+                  successMessage += `\n\nInstalled to: ${fileName}`;
+                }
+                
+                setResult(successMessage);
               }
             }
             
@@ -177,14 +259,28 @@ const HeroicGamesSection = () => {
                 
                 if (updateResponse.status === "success") {
                   configFound = true;
-                  setResult(`ReShade installed successfully for ${selectedGame.name} with ${finalDllOverride.toUpperCase()} API.\nHeroic configuration has been updated. Press HOME key in-game to open ReShade overlay.`);
+                  let successMessage = `ReShade installed successfully for ${selectedGame.name} with ${finalDllOverride.toUpperCase()} API.\nHeroic configuration has been updated. Press HOME key in-game to open ReShade overlay.`;
+                  
+                  if (selectedExecutablePath) {
+                    const fileName = selectedExecutablePath.split('/').pop();
+                    successMessage += `\n\nInstalled to: ${fileName}`;
+                  }
+                  
+                  setResult(successMessage);
                 }
               }
             }
             
             // If config still wasn't found, show a message with manual instructions
             if (!configFound) {
-              setResult(`ReShade installed successfully for ${selectedGame.name} with ${finalDllOverride.toUpperCase()} API, but could not update Heroic configuration.\nYou will need to manually add WINEDLLOVERRIDES="d3dcompiler_47=n;${finalDllOverride}=n,b" to the game's launch options in Heroic.`);
+              let manualMessage = `ReShade installed successfully for ${selectedGame.name} with ${finalDllOverride.toUpperCase()} API, but could not update Heroic configuration.\nYou will need to manually add WINEDLLOVERRIDES="d3dcompiler_47=n;${finalDllOverride}=n,b" to the game's launch options in Heroic.`;
+              
+              if (selectedExecutablePath) {
+                const fileName = selectedExecutablePath.split('/').pop();
+                manualMessage += `\n\nInstalled to: ${fileName}`;
+              }
+              
+              setResult(manualMessage);
             }
           }}
         />
@@ -262,6 +358,118 @@ const HeroicGamesSection = () => {
     }
   };
 
+  const renderExecutableSelection = () => {
+    if (!executableDetection || executableDetection.status !== "success") return null;
+
+    const enhancedResult = executableDetection.heroic_enhanced_detection_result;
+
+    const executableOptions: Array<{
+      path: string;
+      filename: string;
+      method: string;
+      isRecommended: boolean;
+      score?: number;
+      relative_path?: string;
+      displayLabel: string;
+    }> = [];
+
+    // Add enhanced detection results if available
+    if (enhancedResult?.status === "success" && enhancedResult.all_executables) {
+      enhancedResult.all_executables.forEach((exe, index) => {
+        const isRecommended = exe.path === enhancedResult.executable_path;
+        executableOptions.push({
+          path: exe.path,
+          filename: exe.filename,
+          method: 'Enhanced Detection',
+          isRecommended,
+          score: exe.score,
+          relative_path: exe.relative_path || `Directory ${index + 1}`,
+          displayLabel: `${exe.filename} ${isRecommended ? '(RECOMMENDED)' : ''} - ${exe.relative_path || 'Enhanced'} (Score: ${exe.score || 0})`
+        });
+      });
+    }
+
+    if (executableOptions.length === 0) return null;
+
+    return (
+      <>
+        <PanelSectionRow>
+          <div style={{
+            padding: '12px',
+            marginTop: '8px',
+            backgroundColor: 'var(--decky-highlighted-ui-bg)',
+            borderRadius: '4px',
+            border: '1px solid var(--decky-subtle-border)'
+          }}>
+            <div style={{ fontWeight: 'bold', marginBottom: '8px', fontSize: '0.95em' }}>
+              🎯 Executable Detection Results ({executableOptions.length} found)
+            </div>
+          </div>
+        </PanelSectionRow>
+        
+        <PanelSectionRow>
+          <DropdownItem
+            rgOptions={executableOptions.map(option => ({
+              data: option.path,
+              label: option.displayLabel
+            }))}
+            selectedOption={selectedExecutablePath}
+            onChange={(option) => {
+              setSelectedExecutablePath(option.data);
+            }}
+            strDefaultLabel="Select executable location..."
+          />
+        </PanelSectionRow>
+
+        {/* Show details of currently selected executable */}
+        {selectedExecutablePath && (() => {
+          const selectedOption = executableOptions.find(opt => opt.path === selectedExecutablePath);
+          if (!selectedOption) return null;
+
+          return (
+            <PanelSectionRow>
+              <div style={{
+                padding: '8px',
+                backgroundColor: selectedOption.isRecommended ? 'rgba(76, 175, 80, 0.1)' : 'rgba(255, 255, 255, 0.05)',
+                borderRadius: '4px',
+                border: selectedOption.isRecommended ? '1px solid rgba(76, 175, 80, 0.3)' : '1px solid rgba(255, 255, 255, 0.1)',
+                fontSize: '0.85em'
+              }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+                  Selected: {selectedOption.filename}
+                  {selectedOption.isRecommended && (
+                    <span style={{
+                      backgroundColor: '#4CAF50',
+                      color: 'white',
+                      padding: '2px 6px',
+                      borderRadius: '3px',
+                      fontSize: '0.8em',
+                      fontWeight: 'normal',
+                      marginLeft: '8px'
+                    }}>
+                      RECOMMENDED
+                    </span>
+                  )}
+                </div>
+                <div style={{ opacity: 0.8, marginBottom: '2px' }}>
+                  Method: {selectedOption.method}
+                  {selectedOption.score !== undefined && (
+                    <span style={{ marginLeft: '8px' }}>
+                      (Score: {selectedOption.score})
+                    </span>
+                  )}
+                </div>
+                <div style={{ opacity: 0.7, fontSize: '0.8em', wordBreak: 'break-all' }}>
+                  Path: {selectedOption.relative_path}
+                </div>
+              </div>
+            </PanelSectionRow>
+          );
+        })()}
+      </>
+    );
+  };
+
   return (
     <PanelSection title="Heroic Games ReShade">
       {loading ? (
@@ -288,6 +496,16 @@ const HeroicGamesSection = () => {
               strDefaultLabel="Select a Heroic game..."
             />
           </PanelSectionRow>
+
+          {selectedGame && checkingExecutable && (
+            <PanelSectionRow>
+              <div style={{ fontSize: '0.9em', opacity: 0.7 }}>
+                🔍 Analyzing game... Detecting executable
+              </div>
+            </PanelSectionRow>
+          )}
+
+          {renderExecutableSelection()}
 
           {selectedGame && (
             <PanelSectionRow>
