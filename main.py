@@ -399,6 +399,228 @@ class Plugin:
                 "message": str(e)
             }
 
+    async def find_heroic_game_executable_path(self, game_path: str, game_name: str) -> dict:
+        """
+        Find executable paths for a Heroic game, similar to Steam game detection
+        """
+        try:
+            decky.logger.info(f"Finding executable path for Heroic game: {game_name} at {game_path}")
+            
+            # Check cache first
+            cache_key = f"heroic_{game_path}_{game_name}"
+            if cache_key in self.executable_cache:
+                cached_result = self.executable_cache[cache_key]
+                # Check if cache is less than 1 hour old
+                if time.time() - cached_result.get('timestamp', 0) < 3600:
+                    decky.logger.info(f"Using cached result for {game_name}")
+                    return cached_result
+            
+            # Verify game path exists
+            if not os.path.exists(game_path):
+                return {"status": "error", "message": f"Game path not found: {game_path}"}
+            
+            game_path_obj = Path(game_path)
+            
+            # Find all executables in the game directory
+            all_executables = []
+            
+            decky.logger.info(f"Walking directory tree starting from: {game_path}")
+            for root, dirs, files in os.walk(game_path):
+                for file in files:
+                    if file.lower().endswith('.exe'):
+                        exe_path = os.path.join(root, file)
+                        try:
+                            file_size = os.path.getsize(exe_path)
+                            rel_path = os.path.relpath(exe_path, game_path)
+                            
+                            all_executables.append({
+                                "path": exe_path,
+                                "directory_path": os.path.dirname(exe_path),
+                                "relative_path": rel_path,
+                                "filename": file,
+                                "size": file_size,
+                                "size_mb": round(file_size / (1024 * 1024), 1)
+                            })
+                            decky.logger.debug(f"Found exe: {file} ({rel_path}) - {round(file_size / (1024 * 1024), 1)}MB")
+                        except Exception as e:
+                            decky.logger.warning(f"Error getting size for {exe_path}: {str(e)}")
+                            continue
+            
+            if not all_executables:
+                return {
+                    "status": "error",
+                    "method": "heroic_enhanced_detection",
+                    "message": f"No executables found in game directory: {game_path}"
+                }
+            
+            decky.logger.info(f"Found {len(all_executables)} total executables")
+            
+            # Extract words from game name for better matching
+            game_words = set(re.findall(r'\w+', game_name.lower()))
+            
+            decky.logger.info(f"Game words for matching: {game_words}")
+            
+            # Enhanced filtering based on discovered patterns
+            def score_executable(exe_info):
+                score = 50  # Start with a base score
+                filename = exe_info["filename"].lower()
+                rel_path = exe_info["relative_path"].lower()
+                size_mb = exe_info["size_mb"]
+                
+                decky.logger.debug(f"Scoring {filename} at {rel_path}")
+                
+                # LESS aggressive utility filtering - only skip very obvious ones
+                utility_keywords = ["unins", "setup", "vcredist", "directx", "redist"]
+                if any(skip in filename for skip in utility_keywords):
+                    decky.logger.debug(f"  Utility file detected: {filename}")
+                    return 0
+                
+                # Name matching with game name
+                name_words = set(re.findall(r'\w+', filename.lower()))
+                
+                # Calculate word match score based on intersection
+                matching_words = game_words.intersection(name_words)
+                
+                # If there are matching words, they're worth more if they're a larger percentage of the game name
+                if matching_words:
+                    match_percentage = len(matching_words) / len(game_words) if game_words else 0
+                    word_score = len(matching_words) * 1.5 * (1 + match_percentage)
+                    decky.logger.debug(f"  Name match score: +{word_score:.2f} (words: {matching_words})")
+                    score += word_score
+                
+                # If the exe name is a substring of the game name or vice versa, that's a good indicator
+                if filename in game_name.lower() or any(word in filename for word in game_words):
+                    name_substring_score = 2
+                    decky.logger.debug(f"  Name substring match: +{name_substring_score}")
+                    score += name_substring_score
+                
+                # Check for exact name match (normalized)
+                norm_exe_name = re.sub(r'[^a-z0-9]', '', filename)
+                norm_game_name = re.sub(r'[^a-z0-9]', '', game_name.lower())
+                
+                if norm_exe_name == norm_game_name or filename == game_name.lower():
+                    exact_match_score = 3
+                    decky.logger.debug(f"  Exact normalized name match: +{exact_match_score}")
+                    score += exact_match_score
+                
+                # Size-based scoring (more moderate)
+                if size_mb > 50:      # Large games
+                    score += 35
+                elif size_mb > 20:    # Medium games  
+                    score += 25
+                elif size_mb > 5:     # Small games
+                    score += 15
+                elif size_mb > 1:     # Small but not tiny
+                    score += 5
+                elif size_mb < 0.5:   # Very small files (likely utilities)
+                    score -= 20
+                
+                # Path-based scoring (more moderate)
+                if "binaries/win64" in rel_path or "binaries\\win64" in rel_path:    # Unreal Engine pattern
+                    score += 25
+                elif "bin" in rel_path:             # Common bin directory
+                    score += 15
+                elif "game" in rel_path:            # Game subdirectory
+                    score += 10
+                elif rel_path.count("/") == 0 and rel_path.count("\\") == 0:  # Root directory
+                    score += 8
+                
+                # Filename-based scoring (more moderate)
+                if any(good in filename for good in [
+                    "game", "main", "client", "app"
+                ]):
+                    score += 12
+                
+                # Special patterns from real data (more moderate)
+                if "shipping" in filename:          # Unreal shipping builds
+                    score += 20
+                elif "win64" in filename:           # 64-bit indicator
+                    score += 8
+                elif "launcher" in filename:        # Launchers (lower score but don't exclude)
+                    score -= 15
+                
+                # Moderate penalty for deep nesting
+                path_depth = rel_path.count("/") + rel_path.count("\\")
+                if path_depth > 4:  # Increased threshold
+                    score -= (path_depth - 4) * 3
+                
+                # Cap score between 0 and 100
+                score = max(0, min(100, score))
+                
+                decky.logger.debug(f"  Final score for {filename}: {score}")
+                return score
+            
+            # Score all executables
+            scored_executables = []
+            for exe_info in all_executables:
+                score = score_executable(exe_info)
+                if score > 0:
+                    scored_executables.append({
+                        **exe_info,
+                        "score": score
+                    })
+                else:
+                    decky.logger.debug(f"Filtered out {exe_info['filename']} with score {score}")
+            
+            if not scored_executables:
+                # If we filtered everything out, include everything with any positive score
+                decky.logger.warning("All executables filtered out, using less restrictive filtering")
+                for exe_info in all_executables:
+                    score = score_executable(exe_info)
+                    if score >= 0:
+                        scored_executables.append({
+                            **exe_info,
+                            "score": score
+                        })
+            
+            if not scored_executables:
+                # Last resort: include everything
+                decky.logger.warning("Still no executables, including all found")
+                for exe_info in all_executables:
+                    scored_executables.append({
+                        **exe_info,
+                        "score": score_executable(exe_info)
+                    })
+            
+            # Sort by score (highest first) and take top 5
+            scored_executables.sort(key=lambda x: x["score"], reverse=True)
+            top_executables = scored_executables[:5]
+            
+            best_executable = top_executables[0]
+            
+            decky.logger.info(f"Total executables after filtering: {len(scored_executables)}")
+            decky.logger.info(f"Top 5 executables:")
+            for i, exe in enumerate(top_executables):
+                decky.logger.info(f"  {i+1}. {exe['filename']} (score: {exe['score']}) at {exe['relative_path']}")
+            
+            result = {
+                "status": "success",
+                "heroic_enhanced_detection_result": {
+                    "status": "success",
+                    "method": "heroic_enhanced_detection",
+                    "executable_path": best_executable["path"],
+                    "directory_path": best_executable["directory_path"],
+                    "filename": best_executable["filename"],
+                    "all_executables": top_executables,
+                    "confidence": "high" if best_executable["score"] > 70 else "medium"
+                },
+                "recommended_method": "heroic_enhanced_detection",
+                "timestamp": time.time()
+            }
+            
+            # Cache the result
+            self.executable_cache[cache_key] = result
+            
+            return result
+            
+        except Exception as e:
+            decky.logger.error(f"Heroic executable detection error: {str(e)}")
+            return {
+                "status": "error",
+                "method": "heroic_enhanced_detection",
+                "message": str(e)
+            }
+
     async def save_shader_preferences(self, selected_shaders: list) -> dict:
         """Save user's shader preferences to a file"""
         try:
@@ -1650,7 +1872,7 @@ class Plugin:
             decky.logger.error(f"Error updating Heroic config: {str(e)}")
             return {"status": "error", "message": str(e)}
 
-    async def install_reshade_for_heroic_game(self, game_path: str, dll_override: str = "d3d9") -> dict:
+    async def install_reshade_for_heroic_game(self, game_path: str, dll_override: str = "d3d9", selected_executable_path: str = "") -> dict:
         """Install ReShade for a Heroic game by copying files instead of symlinks and properly configuring ReShade.ini"""
         try:
             decky.logger.info(f"Installing ReShade for Heroic game at: {game_path}")
@@ -1665,13 +1887,19 @@ class Plugin:
             if not os.path.exists(game_path):
                 return {"status": "error", "message": f"Game path not found: {game_path}"}
             
-            # Find the actual executable directory using smart detection
-            exe_dir = self._find_heroic_game_executable_directory(game_path)
-            if not exe_dir:
-                decky.logger.warning(f"Could not find executable directory, using provided path: {game_path}")
-                exe_dir = game_path
+            # Determine the target directory for ReShade installation
+            if selected_executable_path and os.path.exists(selected_executable_path):
+                # Use the directory of the selected executable
+                exe_dir = os.path.dirname(selected_executable_path)
+                decky.logger.info(f"Using user-selected executable directory: {exe_dir}")
             else:
-                decky.logger.info(f"Found executable directory: {exe_dir}")
+                # Find the actual executable directory using smart detection
+                exe_dir = self._find_heroic_game_executable_directory(game_path)
+                if not exe_dir:
+                    decky.logger.warning(f"Could not find executable directory, using provided path: {game_path}")
+                    exe_dir = game_path
+                else:
+                    decky.logger.info(f"Found executable directory: {exe_dir}")
             
             # Find architecture by checking for .exe files
             arch = "64"  # Default to 64-bit
@@ -1798,8 +2026,9 @@ class Plugin:
             
             # Only create the file if it doesn't already exist (preserve existing user settings)
             if not os.path.exists(reshade_preset_dst):
+                game_name = os.path.basename(game_path)
                 with open(reshade_preset_dst, 'w', encoding='utf-8') as f:
-                    f.write(f"""# ReShade Preset Configuration for {os.path.basename(game_path)}
+                    f.write(f"""# ReShade Preset Configuration for {game_name}
     # This file will be automatically populated when you save presets in ReShade
     # Press HOME key in-game to open ReShade overlay
     # Go to Settings -> General -> "Reload all shaders" if shaders don't appear
@@ -1845,6 +2074,7 @@ class Plugin:
     DLL Override: {dll_override}
     Architecture: {arch}-bit
     Executable Directory: {exe_dir}
+    {f'Selected Executable: {os.path.basename(selected_executable_path)}' if selected_executable_path else 'Auto-detected executable location'}
 
     Press HOME key in-game to open the ReShade overlay.
 
