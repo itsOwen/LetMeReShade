@@ -190,6 +190,7 @@ class Plugin:
                             library_paths.append(path)
 
                 base_game_path = None
+                game_name = None
                 for library_path in library_paths:
                     manifest_path = Path(library_path) / "steamapps" / f"appmanifest_{appid}.acf"
                     if manifest_path.exists():
@@ -198,13 +199,19 @@ class Plugin:
                                 if '"installdir"' in line:
                                     install_dir = line.split('"installdir"')[1].strip().strip('"')
                                     base_game_path = str(Path(library_path) / "steamapps" / "common" / install_dir)
+                                    game_name = install_dir  # Save the actual game name from Steam
                                     break
+                                elif '"name"' in line:  # Also look for the game's real name
+                                    game_title = line.split('"name"')[1].strip().strip('"')
+                                    if not game_name:  # Only set if we haven't found installdir yet
+                                        game_name = game_title
                         break
 
                 if not base_game_path:
                     return {"status": "error", "message": f"Could not find installation directory for AppID: {appid}"}
                     
                 decky.logger.info(f"Base game path for detection: {base_game_path}")
+                decky.logger.info(f"Game name from Steam: {game_name}")
                 
             except Exception as e:
                 return {"status": "error", "message": str(e)}
@@ -247,6 +254,7 @@ class Plugin:
             def score_executable(exe_info):
                 score = 50  # Start with a base score instead of 0
                 filename = exe_info["filename"].lower()
+                filename_no_ext = os.path.splitext(filename)[0]  # Remove extension
                 rel_path = exe_info["relative_path"].lower()
                 size_mb = exe_info["size_mb"]
                 
@@ -258,51 +266,127 @@ class Plugin:
                     decky.logger.debug(f"  Utility file detected: {filename}")
                     return 0  # Set to 0 instead of negative
                 
-                # Size-based scoring (more moderate)
+                # Enhanced game name matching with multiple normalization approaches
+                # 1. Get directory name from base path
+                dir_name = os.path.basename(base_game_path).lower()
+                
+                # 2. Clean up names by removing spaces, special chars, etc.
+                clean_dir_name = re.sub(r'[^a-z0-9]', '', dir_name)
+                clean_game_name = re.sub(r'[^a-z0-9]', '', game_name.lower()) if game_name else clean_dir_name
+                clean_filename = re.sub(r'[^a-z0-9]', '', filename_no_ext)
+                
+                # 3. Split into words for more flexible matching
+                dir_words = re.findall(r'[a-z0-9]+', dir_name)
+                game_name_words = re.findall(r'[a-z0-9]+', game_name.lower()) if game_name else dir_words
+                filename_words = re.findall(r'[a-z0-9]+', filename_no_ext)
+                
+                # Log the normalized values for debugging
+                decky.logger.debug(f"  Clean names - Dir: '{clean_dir_name}', Game: '{clean_game_name}', File: '{clean_filename}'")
+                
+                # 4. Calculate various types of matches
+                name_match_score = 0
+                
+                # Exact matches (highest priority)
+                if clean_filename == clean_game_name or clean_filename == clean_dir_name:
+                    name_match_score += 60
+                    decky.logger.debug(f"  Exact name match: +60 (normalized names match exactly)")
+                
+                # Substantial partial matches (high priority)
+                elif (clean_game_name in clean_filename or clean_filename in clean_game_name or
+                    clean_dir_name in clean_filename or clean_filename in clean_dir_name):
+                    # Calculate how much of the string matches
+                    match_ratio = max(
+                        len(clean_game_name) / len(clean_filename) if len(clean_filename) > 0 else 0,
+                        len(clean_filename) / len(clean_game_name) if len(clean_game_name) > 0 else 0,
+                        len(clean_dir_name) / len(clean_filename) if len(clean_filename) > 0 else 0,
+                        len(clean_filename) / len(clean_dir_name) if len(clean_dir_name) > 0 else 0
+                    )
+                    # Scale the score based on how much of the string matches (max 45 points)
+                    partial_score = min(45, int(match_ratio * 45))
+                    name_match_score += partial_score
+                    decky.logger.debug(f"  Partial name match: +{partial_score} (ratio: {match_ratio:.2f})")
+                
+                # Word-level matches (medium priority)
+                else:
+                    # Find matching words between game name/dir and filename
+                    matching_game_words = set(game_name_words).intersection(set(filename_words))
+                    matching_dir_words = set(dir_words).intersection(set(filename_words))
+                    
+                    # Use the best match (dir or game name)
+                    best_matches = matching_game_words if len(matching_game_words) > len(matching_dir_words) else matching_dir_words
+                    if best_matches:
+                        # Calculate match percentage relative to the source words
+                        match_percentage = len(best_matches) / len(game_name_words or dir_words) if (game_name_words or dir_words) else 0
+                        word_score = len(best_matches) * 8 * (1 + match_percentage)  # Scale based on percentage match
+                        name_match_score += min(40, round(word_score))  # Cap at 40 points
+                        decky.logger.debug(f"  Word match: +{min(40, round(word_score))} ({best_matches})")
+                
+                # Common game executable names bonus
+                if any(common in filename_no_ext.lower() for common in ["game", "main", "client", "app", "play"]):
+                    common_bonus = 15
+                    name_match_score += common_bonus
+                    decky.logger.debug(f"  Common game exe name: +{common_bonus}")
+                
+                # Add the name match score to the total score
+                score += name_match_score
+                
+                # Size-based scoring (reduced weights)
+                size_score = 0
                 if size_mb > 50:      # Large games
-                    score += 35
+                    size_score = 10  # Reduced from 35
                 elif size_mb > 20:    # Medium games  
-                    score += 25
+                    size_score = 8   # Reduced from 25
                 elif size_mb > 5:     # Small games
-                    score += 15
+                    size_score = 5   # Reduced from 15
                 elif size_mb > 1:     # Small but not tiny
-                    score += 5
+                    size_score = 2   # Reduced from 5
                 elif size_mb < 0.5:   # Very small files (likely utilities)
-                    score -= 20
+                    size_score = -20  # Keep this penalty to avoid tiny utility executables
+                
+                score += size_score
+                decky.logger.debug(f"  Size score: +{size_score} ({size_mb} MB)")
                 
                 # Path-based scoring (more moderate)
+                path_score = 0
                 if "binaries/win64" in rel_path or "binaries\\win64" in rel_path:    # Unreal Engine pattern
-                    score += 25
+                    path_score += 15  # Reduced from 25
                 elif "bin" in rel_path:             # Common bin directory
-                    score += 15
+                    path_score += 10  # Reduced from 15
                 elif "game" in rel_path:            # Game subdirectory
-                    score += 10
+                    path_score += 8   # Reduced from 10
                 elif rel_path.count("/") == 0 and rel_path.count("\\") == 0:  # Root directory
-                    score += 8
+                    path_score += 5   # Reduced from 8
                 
-                # Filename-based scoring (more moderate)
-                if any(good in filename for good in [
-                    "game", "main", "client", "app"
-                ]):
-                    score += 12
+                score += path_score
+                decky.logger.debug(f"  Path score: +{path_score}")
                 
                 # Special patterns from real data (more moderate)
+                special_score = 0
                 if "shipping" in filename:          # Unreal shipping builds
-                    score += 20
+                    special_score += 15  # Reduced from 20
                 elif "win64" in filename:           # 64-bit indicator
-                    score += 8
+                    special_score += 5   # Reduced from 8
                 elif "launcher" in filename:        # Launchers (lower score but don't exclude)
-                    score -= 15
+                    special_score -= 25  # Increased penalty from 15
+                
+                score += special_score
+                if special_score != 0:
+                    decky.logger.debug(f"  Special pattern score: {special_score}")
                 
                 # Moderate penalty for deep nesting
                 path_depth = rel_path.count("/") + rel_path.count("\\")
                 if path_depth > 4:  # Increased threshold
-                    score -= (path_depth - 4) * 3
+                    depth_penalty = (path_depth - 4) * 3
+                    score -= depth_penalty
+                    decky.logger.debug(f"  Deep nesting penalty: -{depth_penalty}")
                 
                 # Cap score between 0 and 100
                 score = max(0, min(100, score))
                 
-                decky.logger.debug(f"  Final score for {filename}: {score}")
+                # Round to 1 decimal place for cleaner display
+                score = round(score, 1)
+                
+                decky.logger.debug(f"  Final score for {filename}: {score} (name match: {name_match_score})")
                 return score
             
             # Score all executables - use much lower threshold
@@ -356,7 +440,7 @@ class Plugin:
                 "directory_path": best_executable["directory_path"],
                 "filename": best_executable["filename"],
                 "all_executables": top_executables,  # Top 5 for UI
-                "confidence": "high" if best_executable["score"] > 100 else "medium"
+                "confidence": "high" if best_executable["score"] > 70 else "medium"
             }
             
         except Exception as e:
@@ -455,15 +539,11 @@ class Plugin:
             
             decky.logger.info(f"Found {len(all_executables)} total executables")
             
-            # Extract words from game name for better matching
-            game_words = set(re.findall(r'\w+', game_name.lower()))
-            
-            decky.logger.info(f"Game words for matching: {game_words}")
-            
             # Enhanced filtering based on discovered patterns
             def score_executable(exe_info):
                 score = 50  # Start with a base score
                 filename = exe_info["filename"].lower()
+                filename_no_ext = os.path.splitext(filename)[0]  # Remove extension
                 rel_path = exe_info["relative_path"].lower()
                 size_mb = exe_info["size_mb"]
                 
@@ -475,79 +555,143 @@ class Plugin:
                     decky.logger.debug(f"  Utility file detected: {filename}")
                     return 0
                 
-                # Name matching with game name
-                name_words = set(re.findall(r'\w+', filename.lower()))
+                # Enhanced game name matching with multiple normalization approaches
+                # 1. Get directory name and clean game name
+                dir_name = os.path.basename(game_path).lower()
+                clean_game_name = game_name.lower()
                 
-                # Calculate word match score based on intersection
-                matching_words = game_words.intersection(name_words)
+                # 2. Clean up names by removing spaces, special chars, etc.
+                clean_dir_name = re.sub(r'[^a-z0-9]', '', dir_name)
+                norm_game_name = re.sub(r'[^a-z0-9]', '', clean_game_name)
+                norm_filename = re.sub(r'[^a-z0-9]', '', filename_no_ext)
                 
-                # If there are matching words, they're worth more if they're a larger percentage of the game name
-                if matching_words:
-                    match_percentage = len(matching_words) / len(game_words) if game_words else 0
-                    word_score = len(matching_words) * 1.5 * (1 + match_percentage)
-                    decky.logger.debug(f"  Name match score: +{word_score:.2f} (words: {matching_words})")
-                    score += word_score
+                # 3. Split into words for more flexible matching
+                dir_words = re.findall(r'[a-z0-9]+', dir_name)
+                game_name_words = re.findall(r'[a-z0-9]+', clean_game_name)
+                filename_words = re.findall(r'[a-z0-9]+', filename_no_ext)
                 
-                # If the exe name is a substring of the game name or vice versa, that's a good indicator
-                if filename in game_name.lower() or any(word in filename for word in game_words):
-                    name_substring_score = 2
-                    decky.logger.debug(f"  Name substring match: +{name_substring_score}")
-                    score += name_substring_score
+                # Log the normalized values for debugging
+                decky.logger.debug(f"  Normalized names - Dir: '{clean_dir_name}', Game: '{norm_game_name}', File: '{norm_filename}'")
                 
-                # Check for exact name match (normalized)
-                norm_exe_name = re.sub(r'[^a-z0-9]', '', filename)
-                norm_game_name = re.sub(r'[^a-z0-9]', '', game_name.lower())
+                # 4. Calculate various types of matches
+                name_match_score = 0
                 
-                if norm_exe_name == norm_game_name or filename == game_name.lower():
-                    exact_match_score = 3
-                    decky.logger.debug(f"  Exact normalized name match: +{exact_match_score}")
-                    score += exact_match_score
+                # Exact matches (highest priority)
+                if norm_filename == norm_game_name or norm_filename == clean_dir_name:
+                    name_match_score += 60
+                    decky.logger.debug(f"  Exact name match: +60 (normalized names match exactly)")
                 
-                # Size-based scoring (more moderate)
+                # Handle specific cases like "among us.exe" vs "amongus" folder
+                elif (norm_filename.replace(" ", "") == norm_game_name or 
+                    norm_game_name.replace(" ", "") == norm_filename or
+                    norm_filename.replace(" ", "") == clean_dir_name or
+                    clean_dir_name.replace(" ", "") == norm_filename):
+                    name_match_score += 55
+                    decky.logger.debug(f"  Space-normalized match: +55")
+                
+                # Substantial partial matches (high priority)
+                elif (norm_game_name in norm_filename or norm_filename in norm_game_name or
+                    clean_dir_name in norm_filename or norm_filename in clean_dir_name):
+                    # Calculate how much of the string matches
+                    match_ratio = max(
+                        len(norm_game_name) / len(norm_filename) if len(norm_filename) > 0 else 0,
+                        len(norm_filename) / len(norm_game_name) if len(norm_game_name) > 0 else 0,
+                        len(clean_dir_name) / len(norm_filename) if len(norm_filename) > 0 else 0,
+                        len(norm_filename) / len(clean_dir_name) if len(clean_dir_name) > 0 else 0
+                    )
+                    # Scale the score based on how much of the string matches (max 45 points)
+                    partial_score = min(45, int(match_ratio * 45))
+                    name_match_score += partial_score
+                    decky.logger.debug(f"  Partial name match: +{partial_score} (ratio: {match_ratio:.2f})")
+                    
+                    # Extra case for when folder has additional characters (like "DREDGEmKMzX" vs "DREDGE.exe")
+                    if (norm_filename in clean_dir_name and len(norm_filename) > 4 and
+                        len(norm_filename) >= len(clean_dir_name) * 0.5):
+                        extra_bonus = 15
+                        name_match_score += extra_bonus
+                        decky.logger.debug(f"  Extra partial match bonus: +{extra_bonus} (likely main game exe)")
+                
+                # Word-level matches (medium priority)
+                else:
+                    # Find matching words between game name/dir and filename
+                    matching_game_words = set(game_name_words).intersection(set(filename_words))
+                    matching_dir_words = set(dir_words).intersection(set(filename_words))
+                    
+                    # Use the best match (dir or game name)
+                    best_matches = matching_game_words if len(matching_game_words) > len(matching_dir_words) else matching_dir_words
+                    if best_matches:
+                        # Calculate match percentage relative to the source words
+                        match_percentage = len(best_matches) / len(game_name_words) if game_name_words else 0
+                        word_score = len(best_matches) * 8 * (1 + match_percentage)  # Scale based on percentage match
+                        name_match_score += min(40, round(word_score))  # Cap at 40 points
+                        decky.logger.debug(f"  Word match: +{min(40, round(word_score))} ({best_matches})")
+                
+                # Common game executable names bonus
+                if any(common in filename_no_ext.lower() for common in ["game", "main", "client", "app", "play"]):
+                    common_bonus = 15
+                    name_match_score += common_bonus
+                    decky.logger.debug(f"  Common game exe name: +{common_bonus}")
+                
+                # Add the name match score to the total score
+                score += name_match_score
+                
+                # Size-based scoring (reduced weights)
+                size_score = 0
                 if size_mb > 50:      # Large games
-                    score += 35
+                    size_score = 10  # Reduced from 35
                 elif size_mb > 20:    # Medium games  
-                    score += 25
+                    size_score = 8   # Reduced from 25
                 elif size_mb > 5:     # Small games
-                    score += 15
+                    size_score = 5   # Reduced from 15
                 elif size_mb > 1:     # Small but not tiny
-                    score += 5
+                    size_score = 2   # Reduced from 5
                 elif size_mb < 0.5:   # Very small files (likely utilities)
-                    score -= 20
+                    size_score = -10  # Reduced from 20
                 
-                # Path-based scoring (more moderate)
+                score += size_score
+                decky.logger.debug(f"  Size score: +{size_score} ({size_mb} MB)")
+                
+                # Path-based scoring
+                path_score = 0
                 if "binaries/win64" in rel_path or "binaries\\win64" in rel_path:    # Unreal Engine pattern
-                    score += 25
+                    path_score += 15  # Reduced from 25
                 elif "bin" in rel_path:             # Common bin directory
-                    score += 15
+                    path_score += 10  # Reduced from 15
                 elif "game" in rel_path:            # Game subdirectory
-                    score += 10
+                    path_score += 8   # Reduced from 10
                 elif rel_path.count("/") == 0 and rel_path.count("\\") == 0:  # Root directory
-                    score += 8
+                    path_score += 5   # Reduced from 8
                 
-                # Filename-based scoring (more moderate)
-                if any(good in filename for good in [
-                    "game", "main", "client", "app"
-                ]):
-                    score += 12
+                score += path_score
+                decky.logger.debug(f"  Path score: +{path_score}")
                 
-                # Special patterns from real data (more moderate)
+                # Special patterns scoring
+                special_score = 0
                 if "shipping" in filename:          # Unreal shipping builds
-                    score += 20
+                    special_score += 15  # Reduced from 20
                 elif "win64" in filename:           # 64-bit indicator
-                    score += 8
+                    special_score += 5   # Reduced from 8
                 elif "launcher" in filename:        # Launchers (lower score but don't exclude)
-                    score -= 15
+                    special_score -= 25  # Increased penalty from 15
+                
+                score += special_score
+                if special_score != 0:
+                    decky.logger.debug(f"  Special pattern score: {special_score}")
                 
                 # Moderate penalty for deep nesting
                 path_depth = rel_path.count("/") + rel_path.count("\\")
                 if path_depth > 4:  # Increased threshold
-                    score -= (path_depth - 4) * 3
+                    depth_penalty = (path_depth - 4) * 3
+                    score -= depth_penalty
+                    decky.logger.debug(f"  Deep nesting penalty: -{depth_penalty}")
                 
                 # Cap score between 0 and 100
                 score = max(0, min(100, score))
                 
-                decky.logger.debug(f"  Final score for {filename}: {score}")
+                # Round to 1 decimal place for cleaner display
+                score = round(score, 1)
+                
+                decky.logger.debug(f"  Final score for {filename}: {score} (name match: {name_match_score})")
                 return score
             
             # Score all executables
@@ -2359,6 +2503,8 @@ class Plugin:
                 
             # Extract words from game name for better matching
             game_words = set(re.findall(r'\w+', game_name.lower()))
+            # Clean game name (remove spaces, special chars)
+            clean_game_name = re.sub(r'[^a-z0-9]', '', game_name.lower())
             
             decky.logger.info(f"Looking for executables for game: {game_name}")
             decky.logger.info(f"Game words for matching: {game_words}")
@@ -2414,12 +2560,19 @@ class Plugin:
                     score -= file_types['setup'] * 1.0
                     score -= file_types['redist'] * 1.0
                     
-                    # Check directory name
+                    # Check directory name - look for similarity to game name
                     dir_name = dir_path.name.lower()
-                    if dir_name in ['bin', 'bin64', 'bin32', 'binaries', 'game', 'main']:
-                        score += 2
+                    clean_dir_name = re.sub(r'[^a-z0-9]', '', dir_name)
+                    
+                    # Increase score for directories that match game name
+                    if clean_dir_name == clean_game_name:
+                        score += 3  # Exact match
+                    elif clean_game_name in clean_dir_name or clean_dir_name in clean_game_name:
+                        score += 2  # Partial match
+                    elif dir_name in ['bin', 'bin64', 'bin32', 'binaries', 'game', 'main']:
+                        score += 2  # Common game directories
                     elif any(term in dir_name for term in ['redist', 'setup', 'support', 'tools', 'eadm']):
-                        score -= 2
+                        score -= 2  # Negative indicators
                     
                     # Analyze subdirectory names
                     subdirs = [d for d in dir_path.iterdir() if d.is_dir()]
@@ -2431,6 +2584,8 @@ class Plugin:
                         if any(indicator in name for name in subdir_names):
                             score += 0.5
                     
+                    # Round to 1 decimal place
+                    score = round(score, 1)
                     decky.logger.debug(f"Directory content score for {dir_path}: {score}")
                     return score
                     
@@ -2452,65 +2607,84 @@ class Plugin:
                     
                 decky.logger.debug(f"Scoring executable: {name}")
                 
-                # Name matching with game name
-                name_words = set(re.findall(r'\w+', name.lower()))
+                # Enhanced name matching for specific cases
+                clean_exe_name = re.sub(r'[^a-z0-9]', '', name)
                 
-                # Calculate word match score based on intersection
-                matching_words = game_words.intersection(name_words)
-                
-                # If there are matching words, they're worth more if they're a larger percentage of the game name
-                if matching_words:
-                    match_percentage = len(matching_words) / len(game_words) if game_words else 0
-                    word_score = len(matching_words) * 1.5 * (1 + match_percentage)
-                    decky.logger.debug(f"  Name match score: +{word_score:.2f} (words: {matching_words})")
-                    score += word_score
-                
-                # If the exe name is a substring of the game name or vice versa, that's a good indicator
-                if name in game_name or any(word in name for word in game_words):
-                    name_substring_score = 2
-                    decky.logger.debug(f"  Name substring match: +{name_substring_score}")
-                    score += name_substring_score
-                
-                # Check for exact name match (normalized)
-                norm_exe_name = re.sub(r'[^a-z0-9]', '', name)
-                norm_game_name = re.sub(r'[^a-z0-9]', '', game_name)
-                
-                if norm_exe_name == norm_game_name or name == game_name:
-                    exact_match_score = 3
-                    decky.logger.debug(f"  Exact normalized name match: +{exact_match_score}")
+                # Check exact match (normalized)
+                if clean_exe_name == clean_game_name:
+                    exact_match_score = 30
+                    decky.logger.debug(f"  Exact normalized match: +{exact_match_score}")
                     score += exact_match_score
                 
+                # Handle special cases like "among us.exe" vs "amongus"
+                elif name.replace(" ", "") == game_name.lower() or game_name.lower().replace(" ", "") == name:
+                    special_match_score = 25
+                    decky.logger.debug(f"  Special space-normalized match: +{special_match_score}")
+                    score += special_match_score
+                
+                # Check partial matches
+                elif clean_game_name in clean_exe_name or clean_exe_name in clean_game_name:
+                    # Calculate how much of the string matches
+                    match_ratio = max(
+                        len(clean_game_name) / len(clean_exe_name) if len(clean_exe_name) > 0 else 0,
+                        len(clean_exe_name) / len(clean_game_name) if len(clean_game_name) > 0 else 0
+                    )
+                    # Scale the score (max 20 points)
+                    partial_score = min(20, int(match_ratio * 20))
+                    score += partial_score
+                    decky.logger.debug(f"  Partial name match: +{partial_score} (ratio: {match_ratio:.2f})")
+                
+                # Word-based matching
+                else:
+                    # Name matching with game name
+                    name_words = set(re.findall(r'\w+', name))
+                    
+                    # Calculate word match score based on intersection
+                    matching_words = game_words.intersection(name_words)
+                    
+                    # If there are matching words, they're worth MUCH more if they're a larger percentage of the game name
+                    if matching_words:
+                        match_percentage = len(matching_words) / len(game_words) if game_words else 0
+                        word_score = len(matching_words) * 5.0 * (1 + match_percentage)  # Increased from 1.5 to 5.0
+                        word_score = min(15, round(word_score, 1))  # Cap at 15 and round
+                        decky.logger.debug(f"  Name match score: +{word_score} (words: {matching_words})")
+                        score += word_score
+                
+                # Bonus for common game executable names (increased)
+                if name.lower() in ["game", "start", "play", "client", "app"]:
+                    common_name_score = 5.0  # Increased from 0.5 to 5.0
+                    decky.logger.debug(f"  Common name bonus: +{common_name_score} ({name})")
+                    score += common_name_score
+                
                 try:
-                    # File size is still a factor, but less important than name matching
+                    # File size is still a factor, but MUCH less important than name matching
                     size = exe_path.stat().st_size
                     size_mb = size / (1024 * 1024)
                     
-                    # Logarithmic scoring for size - diminishing returns for very large files
+                    # Reduced logarithmic scoring for size - much lower weight
                     if size_mb > 0:
                         import math
-                        size_score = min(1.5, math.log10(size_mb) / 2)  # Reduced weight for size
-                        decky.logger.debug(f"  Size score: +{size_score:.2f} ({size_mb:.2f} MB)")
+                        size_score = min(0.5, math.log10(size_mb) / 6)  # Significantly reduced weight for size
+                        size_score = round(size_score, 1)  # Round to 1 decimal
+                        decky.logger.debug(f"  Size score: +{size_score} ({size_mb:.2f} MB)")
                         score += size_score
                     
-                    # Penalize extremely small executables
+                    # Smaller penalty for extremely small executables
                     if size_mb < 0.5:  # Less than 500KB
-                        size_penalty = 1
+                        size_penalty = 0.5  # Reduced from 1
                         decky.logger.debug(f"  Small size penalty: -{size_penalty}")
                         score -= size_penalty
                 except Exception as e:
                     decky.logger.debug(f"  Error checking file size: {e}")
                 
-                # Bonus for common game executable names
-                if name.lower() in ["game", "start", "play", "client", "app"]:
-                    common_name_score = 0.5
-                    decky.logger.debug(f"  Common name bonus: +{common_name_score} ({name})")
-                    score += common_name_score
-                
                 # If the name contains "launcher" or "setup", reduce score significantly
                 if "launcher" in name.lower() or "setup" in name.lower():
-                    launcher_penalty = 3
+                    launcher_penalty = 10  # Increased from 3 to 10
                     decky.logger.debug(f"  Launcher/setup penalty: -{launcher_penalty}")
                     score -= launcher_penalty
+                
+                # Round score to 1 decimal place
+                score = round(score, 1)
                 
                 decky.logger.debug(f"  Final executable score: {score}")
                 return score
@@ -2541,7 +2715,7 @@ class Plugin:
                     if exes_in_dir:
                         best_exe_score = exes_in_dir[0][1]
                         combined_score = best_exe_score + dir_content_score
-                        decky.logger.debug(f"Directory {path} - Best exe: {exes_in_dir[0][0].name} (score: {best_exe_score:.2f}), Dir content: {dir_content_score:.2f}, Combined: {combined_score:.2f}")
+                        decky.logger.debug(f"Directory {path} - Best exe: {exes_in_dir[0][0].name} (score: {best_exe_score:.1f}), Dir content: {dir_content_score:.1f}, Combined: {combined_score:.1f}")
                         
                         if combined_score > best_score:
                             best_score = combined_score
@@ -2563,6 +2737,9 @@ class Plugin:
                 
                 except (PermissionError, OSError) as e:
                     decky.logger.debug(f"Error accessing directory {path}: {e}")
+                
+                # Round final score to 1 decimal
+                best_score = round(best_score, 1)
                 
                 return best_exe_dir, best_score
                 
