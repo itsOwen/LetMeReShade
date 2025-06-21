@@ -166,9 +166,9 @@ class Plugin:
             }
 
     async def find_game_executable_enhanced(self, appid: str) -> dict:
-        """Enhanced executable detection with integrated Linux game detection"""
+        """Enhanced executable detection with simplified Linux game detection"""
         try:
-            decky.logger.info(f"Enhanced detection with Linux check for App ID: {appid}")
+            decky.logger.info(f"Enhanced detection with simplified Linux check for App ID: {appid}")
             
             # Get the base game path using existing method
             try:
@@ -191,23 +191,35 @@ class Plugin:
                     manifest_path = Path(library_path) / "steamapps" / f"appmanifest_{appid}.acf"
                     if manifest_path.exists():
                         with open(manifest_path, "r", encoding="utf-8") as manifest:
-                            for line in manifest:
+                            manifest_content = manifest.read()
+                            for line in manifest_content.split('\n'):
                                 if '"installdir"' in line:
                                     install_dir = line.split('"installdir"')[1].strip().strip('"')
                                     base_game_path = str(Path(library_path) / "steamapps" / "common" / install_dir)
                                     game_name = install_dir
-                                    break
                                 elif '"name"' in line:
                                     game_title = line.split('"name"')[1].strip().strip('"')
                                     if not game_name:
                                         game_name = game_title
-                            break
+                        break
 
                 if not base_game_path:
                     return {"status": "error", "message": f"Could not find installation directory for AppID: {appid}"}
                     
                 decky.logger.info(f"Base game path: {base_game_path}")
                 decky.logger.info(f"Game name from Steam: {game_name}")
+                
+                # Check appmanifest for Linux indicators
+                manifest_has_linux = False
+                for library_path in library_paths:
+                    manifest_path = Path(library_path) / "steamapps" / f"appmanifest_{appid}.acf"
+                    if manifest_path.exists():
+                        with open(manifest_path, "r", encoding="utf-8") as manifest:
+                            manifest_content = manifest.read().lower()
+                            if "linux" in manifest_content:
+                                manifest_has_linux = True
+                                decky.logger.info("Found 'linux' in appmanifest")
+                                break
                 
             except Exception as e:
                 return {"status": "error", "message": str(e)}
@@ -216,18 +228,17 @@ class Plugin:
             if not game_path_obj.exists():
                 return {"status": "error", "message": f"Game path not found: {base_game_path}"}
             
-            # INTEGRATED SCANNING: Find all executables (both Windows and Linux) in one pass
-            all_executables = []
+            # Simplified Linux detection - only check for key indicators
             linux_indicators = {
-                'elf_executables': [],
-                'linux_files': [],
-                'unity_linux_files': [],
-                'linux_specific_files': []
+                'so_files': [],
+                'sh_files': []
             }
             
-            decky.logger.info(f"Scanning directory tree for all executable types: {base_game_path}")
+            all_executables = []
             
-            # Single directory traversal for both Windows and Linux detection
+            decky.logger.info(f"Scanning directory tree for executables and Linux indicators: {base_game_path}")
+            
+            # Single directory traversal
             for root, dirs, files in os.walk(base_game_path):
                 for file in files:
                     file_path = os.path.join(root, file)
@@ -252,136 +263,85 @@ class Plugin:
                         })
                         decky.logger.debug(f"Found Windows exe: {file} ({rel_path}) - {round(file_size / (1024 * 1024), 1)}MB")
                     
-                    # Check for Linux executables and indicators
+                    # Simplified Linux detection - only .so and .sh files
                     file_lower = file.lower()
                     
-                    # Linux executable patterns
-                    if any(file_lower.endswith(ext) for ext in ['.x86_64', '.x86', '.bin']) and os.access(file_path, os.X_OK):
-                        linux_indicators['linux_files'].append(rel_path)
-                        all_executables.append({
-                            "path": file_path,
-                            "directory_path": os.path.dirname(file_path),
-                            "relative_path": rel_path,
-                            "filename": file,
-                            "size": file_size,
-                            "size_mb": round(file_size / (1024 * 1024), 1),
-                            "type": "linux_executable"
-                        })
+                    # Check for .so files
+                    if file_lower.endswith('.so') or '.so.' in file_lower:
+                        linux_indicators['so_files'].append(rel_path)
+                        decky.logger.debug(f"Found .so file: {rel_path}")
                     
-                    # Linux shared libraries
-                    elif file_lower.endswith('.so') or '.so.' in file_lower:
-                        linux_indicators['linux_files'].append(rel_path)
-                    
-                    # Shell scripts
+                    # Check for .sh files
                     elif file_lower.endswith('.sh'):
-                        linux_indicators['linux_files'].append(rel_path)
-                        if any(name in file_lower for name in ['start', 'run', 'launch', 'game']):
-                            all_executables.append({
-                                "path": file_path,
-                                "directory_path": os.path.dirname(file_path),
-                                "relative_path": rel_path,
-                                "filename": file,
-                                "size": file_size,
-                                "size_mb": round(file_size / (1024 * 1024), 1),
-                                "type": "linux_script"
-                            })
-                    
-                    # Unity Linux indicators
-                    elif file_lower == 'unityplayer.so':
-                        linux_indicators['unity_linux_files'].append(rel_path)
-                    
-                    # Desktop files
-                    elif file_lower.endswith('.desktop'):
-                        linux_indicators['linux_specific_files'].append(rel_path)
-                    
-                    # Check for ELF binaries (files without extension)
-                    elif '.' not in file and os.access(file_path, os.X_OK) and file_size > 1024:  # Minimum size check
-                        try:
-                            # Use 'file' command to check if it's an ELF binary
-                            process = subprocess.run(
-                                ["file", file_path],
-                                capture_output=True,
-                                text=True,
-                                timeout=2
-                            )
-                            if "ELF" in process.stdout:
-                                linux_indicators['elf_executables'].append(file)
-                                all_executables.append({
-                                    "path": file_path,
-                                    "directory_path": os.path.dirname(file_path),
-                                    "relative_path": rel_path,
-                                    "filename": file,
-                                    "size": file_size,
-                                    "size_mb": round(file_size / (1024 * 1024), 1),
-                                    "type": "linux_elf"
-                                })
-                                decky.logger.debug(f"Found Linux ELF: {file} ({rel_path}) - {round(file_size / (1024 * 1024), 1)}MB")
-                        except Exception as e:
-                            decky.logger.debug(f"Error checking ELF for {file_path}: {str(e)}")
-            
-            # INTEGRATED LINUX GAME ANALYSIS
-            windows_executables = [exe for exe in all_executables if exe["type"] == "windows_exe"]
-            linux_executables = [exe for exe in all_executables if exe["type"] in ["linux_executable", "linux_elf", "linux_script"]]
+                        linux_indicators['sh_files'].append(rel_path)
+                        decky.logger.debug(f"Found .sh file: {rel_path}")
             
             # Filter out utility executables from Windows list
             main_windows_executables = []
-            for exe in windows_executables:
-                exe_name = exe["filename"].lower()
-                if not any(skip in exe_name for skip in ["unins", "redist", "vcredist", "directx", "setup", "install"]):
-                    main_windows_executables.append(exe)
+            for exe in all_executables:
+                if exe["type"] == "windows_exe":
+                    exe_name = exe["filename"].lower()
+                    if not any(skip in exe_name for skip in ["unins", "redist", "vcredist", "directx", "setup", "install"]):
+                        main_windows_executables.append(exe)
             
-            # Determine if this is a Linux game
+            # Simplified Linux game determination
             is_linux_game = False
             linux_confidence = "low"
             linux_reasons = []
             
-            # Strong indicators of Linux version
-            if linux_indicators['elf_executables']:
+            # Check for Linux indicators
+            so_file_count = len(linux_indicators['so_files'])
+            sh_file_count = len(linux_indicators['sh_files'])
+            
+            if manifest_has_linux:
                 is_linux_game = True
                 linux_confidence = "high"
-                linux_reasons.append(f"Found Linux ELF executables: {', '.join(linux_indicators['elf_executables'][:3])}")
+                linux_reasons.append("Steam manifest contains 'linux'")
             
-            if linux_indicators['unity_linux_files']:
+            if so_file_count >= 5:  # Multiple .so files is a strong indicator
                 is_linux_game = True
-                linux_confidence = "high"
-                linux_reasons.append(f"Found Unity Linux files: {', '.join(linux_indicators['unity_linux_files'])}")
+                if linux_confidence != "high":
+                    linux_confidence = "medium"
+                linux_reasons.append(f"Found {so_file_count} shared library (.so) files")
             
-            # Medium indicators
-            if not main_windows_executables and len(linux_indicators['linux_files']) >= 3:
-                is_linux_game = True
-                linux_confidence = "medium"
-                linux_reasons.append("No Windows executables found, multiple Linux files present")
-            
-            if linux_indicators['linux_specific_files']:
+            if sh_file_count >= 2:  # Multiple shell scripts
                 is_linux_game = True
                 if linux_confidence == "low":
                     linux_confidence = "medium"
-                linux_reasons.append(f"Found Linux-specific files: {', '.join(linux_indicators['linux_specific_files'][:3])}")
+                linux_reasons.append(f"Found {sh_file_count} shell script (.sh) files")
+            
+            # If no Windows executables and Linux indicators present
+            if not main_windows_executables and (so_file_count > 0 or sh_file_count > 0):
+                is_linux_game = True
+                if linux_confidence == "low":
+                    linux_confidence = "medium"
+                linux_reasons.append("No Windows executables found, Linux files present")
             
             # If it's determined to be a Linux game, return early with warning
             if is_linux_game and linux_confidence in ["high", "medium"]:
                 return {
                     "status": "linux_game_detected",
-                    "method": "enhanced_detection_with_linux_check",
+                    "method": "enhanced_detection_with_simplified_linux_check",
                     "is_linux_game": True,
                     "linux_confidence": linux_confidence,
                     "linux_reasons": linux_reasons,
                     "linux_indicators": linux_indicators,
                     "windows_executables_found": len(main_windows_executables),
-                    "linux_executables_found": len(linux_executables),
                     "message": "Linux version detected - ReShade requires Windows version through Proton",
                     "details": {
                         "game_path": base_game_path,
                         "total_files_scanned": len(all_executables),
                         "windows_exe_count": len(main_windows_executables),
-                        "linux_exe_count": len(linux_executables)
+                        "so_files_count": so_file_count,
+                        "sh_files_count": sh_file_count
                     },
                     "scan_summary": {
                         "total_files_scanned": len(all_executables),
-                        "windows_executables": len(windows_executables),
+                        "windows_executables": len(all_executables),
                         "main_windows_executables": len(main_windows_executables),
-                        "linux_executables": len(linux_executables),
-                        "linux_indicators_found": sum(len(v) if isinstance(v, list) else 0 for v in linux_indicators.values())
+                        "so_files": so_file_count,
+                        "sh_files": sh_file_count,
+                        "linux_indicators_found": so_file_count + sh_file_count
                     }
                 }
             
@@ -389,28 +349,30 @@ class Plugin:
             if not main_windows_executables:
                 return {
                     "status": "error",
-                    "method": "enhanced_detection_with_linux_check",
+                    "method": "enhanced_detection_with_simplified_linux_check",
                     "is_linux_game": is_linux_game,
                     "linux_confidence": linux_confidence,
                     "message": f"No suitable Windows executables found in game directory: {base_game_path}",
                     "details": {
                         "total_executables_found": len(all_executables),
-                        "windows_exe_count": len(windows_executables),
+                        "windows_exe_count": len(all_executables),
                         "main_windows_exe_count": len(main_windows_executables),
-                        "linux_exe_count": len(linux_executables)
+                        "so_files_count": so_file_count,
+                        "sh_files_count": sh_file_count
                     },
                     "scan_summary": {
                         "total_files_scanned": len(all_executables),
-                        "windows_executables": len(windows_executables),
+                        "windows_executables": len(all_executables),
                         "main_windows_executables": len(main_windows_executables),
-                        "linux_executables": len(linux_executables),
-                        "linux_indicators_found": sum(len(v) if isinstance(v, list) else 0 for v in linux_indicators.values())
+                        "so_files": so_file_count,
+                        "sh_files": sh_file_count,
+                        "linux_indicators_found": so_file_count + sh_file_count
                     }
                 }
             
             decky.logger.info(f"Found {len(main_windows_executables)} Windows executables for scoring")
             
-            # ENHANCED SCORING for Windows executables
+            # ENHANCED SCORING for Windows executables (keeping existing logic)
             def score_executable(exe_info):
                 score = 50
                 filename = exe_info["filename"].lower()
@@ -543,15 +505,16 @@ class Plugin:
             if not scored_executables:
                 return {
                     "status": "error",
-                    "method": "enhanced_detection_with_linux_check",
+                    "method": "enhanced_detection_with_simplified_linux_check",
                     "is_linux_game": is_linux_game,
                     "message": "No suitable Windows executables found after scoring",
                     "scan_summary": {
                         "total_files_scanned": len(all_executables),
-                        "windows_executables": len(windows_executables),
+                        "windows_executables": len(all_executables),
                         "main_windows_executables": len(main_windows_executables),
-                        "linux_executables": len(linux_executables),
-                        "linux_indicators_found": sum(len(v) if isinstance(v, list) else 0 for v in linux_indicators.values())
+                        "so_files": so_file_count,
+                        "sh_files": sh_file_count,
+                        "linux_indicators_found": so_file_count + sh_file_count
                     }
                 }
             
@@ -564,7 +527,7 @@ class Plugin:
             
             return {
                 "status": "success",
-                "method": "enhanced_detection_with_linux_check",
+                "method": "enhanced_detection_with_simplified_linux_check",
                 "executable_path": best_executable["path"],
                 "directory_path": best_executable["directory_path"],
                 "filename": best_executable["filename"],
@@ -575,10 +538,11 @@ class Plugin:
                 "linux_reasons": linux_reasons if linux_reasons else None,
                 "scan_summary": {
                     "total_files_scanned": len(all_executables),
-                    "windows_executables": len(windows_executables),
+                    "windows_executables": len(all_executables),
                     "main_windows_executables": len(main_windows_executables),
-                    "linux_executables": len(linux_executables),
-                    "linux_indicators_found": sum(len(v) if isinstance(v, list) else 0 for v in linux_indicators.values())
+                    "so_files": so_file_count,
+                    "sh_files": sh_file_count,
+                    "linux_indicators_found": so_file_count + sh_file_count
                 }
             }
             
@@ -586,7 +550,7 @@ class Plugin:
             decky.logger.error(f"Enhanced detection error: {str(e)}")
             return {
                 "status": "error",
-                "method": "enhanced_detection_with_linux_check",
+                "method": "enhanced_detection_with_simplified_linux_check",
                 "message": str(e)
             }
 
