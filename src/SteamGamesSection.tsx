@@ -1,4 +1,3 @@
-// src/SteamGamesSection.tsx - Complete updated version with integrated detection
 import { useState, useEffect } from "react";
 import {
   PanelSection,
@@ -71,7 +70,8 @@ interface DetectionResult {
     total_files_scanned: number;
     windows_executables: number;
     main_windows_executables: number;
-    linux_executables: number;
+    so_files: number;
+    sh_files: number;
     linux_indicators_found: number;
   };
 }
@@ -211,23 +211,6 @@ const SteamGamesSection = () => {
             This appears to be a Linux version of <strong>{selectedGame.name}</strong>. 
             ReShade only works with Windows games running through Proton.
           </p>
-          
-          <div style={{ marginBottom: '16px', padding: '8px', backgroundColor: 'rgba(255, 193, 7, 0.1)', borderRadius: '4px' }}>
-            <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
-              Detection Confidence: {linuxInfo.confidence.toUpperCase()}
-            </div>
-            {linuxInfo.reasons && linuxInfo.reasons.length > 0 && (
-              <div style={{ fontSize: '0.9em' }}>
-                Detected: {linuxInfo.reasons.slice(0, 2).join(', ')}
-              </div>
-            )}
-            {linuxInfo.scan_summary && (
-              <div style={{ fontSize: '0.8em', marginTop: '4px', opacity: 0.8 }}>
-                Scanned {linuxInfo.scan_summary.total_files_scanned} files: 
-                {linuxInfo.scan_summary.linux_executables} Linux, {linuxInfo.scan_summary.windows_executables} Windows
-              </div>
-            )}
-          </div>
           
           <p style={{ marginBottom: '8px', fontWeight: 'bold' }}>To fix this:</p>
           <div style={{ marginBottom: '16px', paddingLeft: '8px' }}>
@@ -417,7 +400,7 @@ const SteamGamesSection = () => {
               )}
               {linuxInfo.scan_summary && (
                 <div style={{ fontSize: '0.8em', marginTop: '4px', opacity: 0.9 }}>
-                  Found: {linuxInfo.scan_summary.linux_executables} Linux files, {linuxInfo.scan_summary.windows_executables} Windows files
+                  Found: {linuxInfo.scan_summary.so_files} .so files, {linuxInfo.scan_summary.sh_files} .sh files
                 </div>
               )}
             </div>
@@ -440,10 +423,7 @@ const SteamGamesSection = () => {
               </div>
               <div>
                 Windows: {enhancedResult.scan_summary.main_windows_executables} executables • 
-                Linux: {enhancedResult.scan_summary.linux_executables} executables
-                {enhancedResult.scan_summary.linux_indicators_found > 0 && 
-                  ` • ${enhancedResult.scan_summary.linux_indicators_found} Linux indicators`
-                }
+                Linux: {enhancedResult.scan_summary.so_files} .so files, {enhancedResult.scan_summary.sh_files} .sh files
               </div>
             </div>
           </PanelSectionRow>
