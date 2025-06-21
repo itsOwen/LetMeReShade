@@ -13,7 +13,6 @@ import { callable } from "@decky/api";
 // Import the callable functions
 const manageGameReShade = callable<[string, string, string, string, string], ReShadeResponse>("manage_game_reshade");
 const checkReShadePath = callable<[], PathCheckResponse>("check_reshade_path");
-const checkVkBasaltPath = callable<[], PathCheckResponse>("check_vkbasalt_path");
 const listInstalledGames = callable<[], GameListResponse>("list_installed_games");
 const detectLinuxGame = callable<[string], LinuxGameDetectionResponse>("detect_linux_game");
 const findGameExecutablePath = callable<[string], ExecutableDetectionResponse>("find_game_executable_path");
@@ -136,9 +135,12 @@ const SteamGamesSection = () => {
 
       try {
         setCheckingLinuxGame(true);
+        console.log(`Checking Linux game detection for: ${selectedGame.name} (${selectedGame.appid})`);
         const detection = await detectLinuxGame(selectedGame.appid);
+        console.log('Linux game detection result:', detection);
         setLinuxGameDetection(detection);
       } catch (error) {
+        console.error('Linux game detection error:', error);
         await logError(`Linux game detection error: ${String(error)}`);
         setLinuxGameDetection(null);
       } finally {
@@ -358,45 +360,34 @@ const SteamGamesSection = () => {
     }
   };
 
-  const handleVkBasaltPatch = async () => {
-    if (!selectedGame) {
-      setResult('Please select a game.');
-      return;
-    }
-
-    try {
-      // Check if VkBasalt is installed first
-      const vkbasaltCheck = await checkVkBasaltPath();
-      if (!vkbasaltCheck.exists) {
-        setResult('Please install VkBasalt first before enabling it for games.');
-        return;
-      }
-
-      showModal(
-        <ConfirmModal
-          strTitle="Enable VkBasalt"
-          strDescription={`Are you sure you want to enable VkBasalt for ${selectedGame.name}?`}
-          strOKButtonText="Enable"
-          strCancelButtonText="Cancel"
-          onOK={async () => {
-            await SteamClient.Apps.SetAppLaunchOptions(parseInt(selectedGame.appid), 'ENABLE_VKBASALT=1 %command%');
-            setResult(`VkBasalt enabled for ${selectedGame.name}.\nPress HOME key in-game to toggle effects.`);
-          }}
-        />
-      );
-    } catch (error) {
-      setResult(`Error: ${error instanceof Error ? error.message : String(error)}`);
-      await logError(`SteamGamesSection -> handleVkBasaltPatch: ${String(error)}`);
-    }
-  };
-
   const renderLinuxGameWarning = () => {
-    if (!linuxGameDetection || !linuxGameDetection.is_linux_game) return null;
+    console.log('renderLinuxGameWarning called, linuxGameDetection:', linuxGameDetection);
     
-    if (linuxGameDetection.confidence === "low") return null; // Don't show warning for low confidence
+    if (!linuxGameDetection) {
+      console.log('No Linux game detection data');
+      return null;
+    }
+    
+    if (linuxGameDetection.status !== "success") {
+      console.log('Linux game detection failed:', linuxGameDetection.message);
+      return null;
+    }
+    
+    if (!linuxGameDetection.is_linux_game) {
+      console.log('Game is not detected as Linux game');
+      return null;
+    }
+    
+    console.log(`Linux game detected with confidence: ${linuxGameDetection.confidence}`);
+    
+    if (linuxGameDetection.confidence === "low") {
+      console.log('Confidence is low, not showing warning');
+      return null; // Don't show warning for low confidence
+    }
 
     const confidenceColor = linuxGameDetection.confidence === "high" ? "#ff6b6b" : "#ffa726";
     
+    console.log('Rendering Linux game warning');
     return (
       <PanelSectionRow>
         <div style={{
@@ -415,6 +406,11 @@ const SteamGamesSection = () => {
           <div style={{ fontSize: '0.85em' }}>
             <strong>Fix:</strong> Properties → Compatibility → Force Proton → Reinstall game
           </div>
+          {linuxGameDetection.reasons && linuxGameDetection.reasons.length > 0 && (
+            <div style={{ fontSize: '0.8em', marginTop: '8px', opacity: 0.9 }}>
+              <strong>Detected:</strong> {linuxGameDetection.reasons.slice(0, 2).join(', ')}
+            </div>
+          )}
         </div>
       </PanelSectionRow>
     );
@@ -609,6 +605,31 @@ const SteamGamesSection = () => {
             </PanelSectionRow>
           )}
 
+          {/* Debug info for Linux game detection - temporary */}
+          {selectedGame && linuxGameDetection && (
+            <PanelSectionRow>
+              <div style={{
+                padding: '8px',
+                backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                borderRadius: '4px',
+                fontSize: '0.8em',
+                marginTop: '8px'
+              }}>
+                <div><strong>Debug:</strong> Linux Detection Status: {linuxGameDetection.status}</div>
+                {linuxGameDetection.status === "success" && (
+                  <>
+                    <div>Is Linux Game: {linuxGameDetection.is_linux_game ? "YES" : "NO"}</div>
+                    <div>Confidence: {linuxGameDetection.confidence}</div>
+                    <div>Reasons: {linuxGameDetection.reasons?.length || 0}</div>
+                  </>
+                )}
+                {linuxGameDetection.status === "error" && (
+                  <div>Error: {linuxGameDetection.message}</div>
+                )}
+              </div>
+            </PanelSectionRow>
+          )}
+
           {renderLinuxGameWarning()}
           {renderExecutableSelection()}
 
@@ -659,17 +680,9 @@ const SteamGamesSection = () => {
               <PanelSectionRow>
                 <ButtonItem
                   layout="below"
-                  onClick={handleVkBasaltPatch}
-                >
-                  🎨 Enable VkBasalt
-                </ButtonItem>
-              </PanelSectionRow>
-              <PanelSectionRow>
-                <ButtonItem
-                  layout="below"
                   onClick={handleUnpatch}
                 >
-                  🗑️ Remove ReShade/VkBasalt
+                  🗑️ Remove ReShade
                 </ButtonItem>
               </PanelSectionRow>
             </>

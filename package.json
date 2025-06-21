@@ -1,6 +1,6 @@
 {
   "name": "letmereshade-decky",
-  "version": "1.6",
+  "version": "1.7",
   "description": "ReShade plugin for Steam Deck - Enhanced version with improved shader selection and game management",
   "type": "module",
   "scripts": {
@@ -104,21 +104,6 @@
       "name": "sweetfx_shaders.tar.gz",
       "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/sweetfx_shaders.tar.gz",
       "sha256hash": "f8f370bb95f5501be40adcf8ab5aefdbb5475d0d73062b374f8e02c20ce8cb02"
-    },
-    {
-      "name": "vkbasalt_package.tar.zst",
-      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/vkbasalt_package.tar.zst",
-      "sha256hash": "07c5b7354961b5a0fdfce9fa3a3fd82dbcdc3c49249b908fb1378786a1412451"
-    },
-    {
-      "name": "vkbasalt_package_lib32.tar.zst",
-      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/vkbasalt_package_lib32.tar.zst",
-      "sha256hash": "c5a99c1845bef69fa992dc19eb6a0900b0e994bb7c45aca9144bef363d61cf6b"
-    },
-    {
-      "name": "vkbasalt_shaders.tar.gz",
-      "url": "https://github.com/itsOwen/LetMeReShade/releases/download/LetMeReShade_Binaries/vkbasalt_shaders.tar.gz", 
-      "sha256hash": "ffcd4374ee03b68d67785ec1fc85724f529c2e7356d11160eb47ecfae38ea460"
     },
     {
       "name": "retroarch_shaders.tar.gz",

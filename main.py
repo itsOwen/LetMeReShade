@@ -22,17 +22,14 @@ class Plugin:
             'RESHADE_VERSION': 'latest',
             'AUTOHDR_ENABLED': '0'
         }
-        # Separate base paths for ReShade and VkBasalt
+        # Main paths for ReShade
         self.main_path = os.path.join(self.environment['XDG_DATA_HOME'], 'reshade')
-        self.vkbasalt_base_path = os.path.join(self.environment['XDG_DATA_HOME'], 'vkbasalt')
-        self.vkbasalt_path = os.path.join(self.vkbasalt_base_path, 'installation')
         
         # Cache for executable paths
         self.executable_cache = {}
         
         # Create necessary directories
         os.makedirs(self.main_path, exist_ok=True)
-        os.makedirs(self.vkbasalt_path, exist_ok=True)
 
     def _get_assets_dir(self) -> Path:
         """Get the assets directory, checking both possible locations"""
@@ -1219,10 +1216,6 @@ class Plugin:
             "version_info": version_info
         }
 
-    async def check_vkbasalt_path(self) -> dict:
-        marker_file = Path(self.vkbasalt_base_path) / ".installed"
-        return {"exists": marker_file.exists()}
-
     async def run_install_reshade(self, with_addon: bool = False, version: str = "latest", with_autohdr: bool = False, selected_shaders: list = None) -> dict:
         try:
             assets_dir = self._get_assets_dir()
@@ -1319,38 +1312,6 @@ class Plugin:
             decky.logger.error(f"Install error: {str(e)}")
             return {"status": "error", "message": str(e)}
 
-    async def run_install_vkbasalt(self) -> dict:
-        try:
-            assets_dir = self._get_assets_dir()
-            script_path = assets_dir / "vkbasalt-install.sh"
-            
-            if not script_path.exists():
-                decky.logger.error(f"VkBasalt install script not found: {script_path}")
-                return {"status": "error", "message": "VkBasalt install script not found"}
-
-            process = subprocess.run(
-                ["/bin/bash", str(script_path)],
-                cwd=str(assets_dir),
-                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib', 'VKBASALT_PATH': self.vkbasalt_path},
-                capture_output=True,
-                text=True
-            )
-
-            decky.logger.info(f"VkBasalt install output:\n{process.stdout}")
-            if process.stderr:
-                decky.logger.error(f"VkBasalt install errors:\n{process.stderr}")
-
-            if process.returncode != 0:
-                return {"status": "error", "message": process.stderr}
-
-            marker_file = Path(self.vkbasalt_base_path) / ".installed"
-            marker_file.touch()
-            
-            return {"status": "success", "output": "VkBasalt installed successfully!"}
-        except Exception as e:
-            decky.logger.error(f"VkBasalt install error: {str(e)}")
-            return {"status": "error", "message": str(e)}
-
     async def run_uninstall_reshade(self) -> dict:
         try:
             assets_dir = self._get_assets_dir()
@@ -1387,46 +1348,24 @@ class Plugin:
             decky.logger.error(str(e))
             return {"status": "error", "message": str(e)}
 
-    async def run_uninstall_vkbasalt(self) -> dict:
-        try:
-            assets_dir = self._get_assets_dir()
-            script_path = assets_dir / "vkbasalt-uninstall.sh"
-            
-            if not script_path.exists():
-                return {"status": "error", "message": "VkBasalt uninstall script not found"}
-
-            process = subprocess.run(
-                ["/bin/bash", str(script_path)],
-                cwd=str(assets_dir),
-                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib', 'VKBASALT_PATH': self.vkbasalt_path},
-                capture_output=True,
-                text=True
-            )
-            
-            if process.returncode != 0:
-                return {"status": "error", "message": process.stderr}
-
-            marker_file = Path(self.vkbasalt_base_path) / ".installed"
-            if marker_file.exists():
-                marker_file.unlink()
-                    
-            return {"status": "success", "output": "VkBasalt uninstalled"}
-        except Exception as e:
-            decky.logger.error(str(e))
-            return {"status": "error", "message": str(e)}
-
     async def detect_linux_game(self, appid: str) -> dict:
         """Detect if a Steam game is running the Linux version instead of Windows version"""
         try:
+            decky.logger.info(f"Starting Linux game detection for App ID: {appid}")
             game_path = self._find_game_path(appid)
             decky.logger.info(f"Checking if game is Linux version: {game_path}")
             
             # Convert to Path object for easier handling
             game_path_obj = Path(game_path)
             
+            if not game_path_obj.exists():
+                decky.logger.error(f"Game path does not exist: {game_path}")
+                return {"status": "error", "message": f"Game path not found: {game_path}"}
+            
             # Check 1: Look for .exe files (Windows indicator)
             exe_files = list(game_path_obj.rglob("*.exe"))
             has_exe_files = len(exe_files) > 0
+            decky.logger.info(f"Found {len(exe_files)} .exe files")
             
             # Filter out known utility/redistributable executables
             main_exe_files = []
@@ -1436,6 +1375,7 @@ class Plugin:
                     main_exe_files.append(exe)
             
             has_main_exe = len(main_exe_files) > 0
+            decky.logger.info(f"Found {len(main_exe_files)} main .exe files (excluding utilities)")
             
             # Check 2: Look for Linux-specific file patterns only (no directories)
             linux_file_indicators = [
@@ -1450,6 +1390,8 @@ class Plugin:
                 file_matches = [m for m in matches if m.is_file()]
                 if file_matches:
                     linux_files_found.extend([str(m.relative_to(game_path_obj)) for m in file_matches[:5]])  # Limit to 5 examples
+            
+            decky.logger.info(f"Found {len(linux_files_found)} Linux-specific files: {linux_files_found[:3]}")
             
             # Check 3: Look for Linux executables (files without extension that are ELF binaries)
             linux_executables = []
@@ -1469,6 +1411,8 @@ class Plugin:
                     except Exception as e:
                         decky.logger.debug(f"Error checking file {file}: {str(e)}")
             
+            decky.logger.info(f"Found {len(linux_executables)} Linux ELF executables: {linux_executables}")
+            
             # Check 4: Look for Unity Linux file indicators (files only)
             unity_linux_file_patterns = [
                 "UnityPlayer.so",
@@ -1483,6 +1427,8 @@ class Plugin:
                 file_matches = [m for m in matches if m.is_file()]
                 if file_matches:
                     unity_linux_files.extend([str(m.relative_to(game_path_obj)) for m in file_matches[:3]])
+            
+            decky.logger.info(f"Found {len(unity_linux_files)} Unity Linux files: {unity_linux_files}")
             
             # Check 5: Look for other Linux-specific files
             linux_specific_files = []
@@ -1499,6 +1445,8 @@ class Plugin:
                         if len(linux_specific_files) >= 5:  # Limit examples
                             break
             
+            decky.logger.info(f"Found {len(linux_specific_files)} Linux-specific files: {linux_specific_files}")
+            
             # Decision logic
             is_linux_game = False
             confidence = "low"
@@ -1509,28 +1457,33 @@ class Plugin:
                 is_linux_game = True
                 confidence = "high"
                 reasons.append(f"Found Linux ELF executables: {', '.join(linux_executables[:3])}")
+                decky.logger.info("HIGH confidence: Found Linux ELF executables")
             
             if unity_linux_files:
                 is_linux_game = True
                 confidence = "high"
                 reasons.append(f"Found Unity Linux files: {', '.join(unity_linux_files)}")
+                decky.logger.info("HIGH confidence: Found Unity Linux files")
             
             # Medium indicators
             if not has_main_exe and len(linux_files_found) >= 3:
                 is_linux_game = True
                 confidence = "medium"
                 reasons.append(f"No Windows .exe files found, but multiple Linux files present")
+                decky.logger.info("MEDIUM confidence: No main exe files but Linux files present")
             
             if linux_specific_files:
                 is_linux_game = True
                 confidence = "medium" if confidence == "low" else confidence
                 reasons.append(f"Found Linux-specific files: {', '.join(linux_specific_files[:3])}")
+                decky.logger.info("MEDIUM confidence: Found Linux-specific files")
             
             # Weak indicators
             if not has_exe_files and len(linux_files_found) >= 1:
                 is_linux_game = True
                 confidence = "medium" if not reasons else confidence
                 reasons.append("Linux files found, no Windows executables")
+                decky.logger.info("WEAK indicator: Linux files but no Windows executables")
             
             # Additional context
             total_files = len([f for f in game_path_obj.rglob("*") if f.is_file()]) if game_path_obj.exists() else 0
@@ -1553,10 +1506,11 @@ class Plugin:
                 }
             }
             
-            decky.logger.info(f"Linux game detection result: {result}")
+            decky.logger.info(f"Linux game detection result for {appid}: is_linux={is_linux_game}, confidence={confidence}, reasons={len(reasons)}")
             return result
             
         except ValueError as e:
+            decky.logger.error(f"ValueError in detect_linux_game: {str(e)}")
             return {"status": "error", "message": str(e)}
         except Exception as e:
             decky.logger.error(f"Error detecting Linux game: {str(e)}")
@@ -2165,7 +2119,7 @@ class Plugin:
         return {"status": "error", "message": f"No config file found for app name: {app_name}"}
 
     async def update_heroic_config(self, config_file: str, config_key: str, dll_override: str) -> dict:
-        """Update Heroic game configuration with WINEDLLOVERRIDES for ReShade or ENABLE_VKBASALT for VkBasalt"""
+        """Update Heroic game configuration with WINEDLLOVERRIDES for ReShade"""
         try:
             config_path = os.path.expanduser("~/.var/app/com.heroicgameslauncher.hgl/config/heroic/GamesConfig/")
             config_file_path = os.path.join(config_path, config_file)
@@ -2186,33 +2140,19 @@ class Plugin:
             if env_key not in config_data[config_key]:
                 config_data[config_key][env_key] = []
             
-            # Special case for VkBasalt
-            if dll_override == "vkbasalt":
-                # Remove any existing ENABLE_VKBASALT
-                config_data[config_key][env_key] = [
-                    env for env in config_data[config_key][env_key] 
-                    if env.get("key") != "ENABLE_VKBASALT"
-                ]
-                
-                # Add ENABLE_VKBASALT=1
+            # Handle WINEDLLOVERRIDES
+            # Remove any existing WINEDLLOVERRIDES
+            config_data[config_key][env_key] = [
+                env for env in config_data[config_key][env_key] 
+                if env.get("key") != "WINEDLLOVERRIDES"
+            ]
+            
+            # Add new WINEDLLOVERRIDES if not removing
+            if dll_override != "remove":
                 config_data[config_key][env_key].append({
-                    "key": "ENABLE_VKBASALT",
-                    "value": "1"
+                    "key": "WINEDLLOVERRIDES",
+                    "value": f"d3dcompiler_47=n;{dll_override}=n,b"
                 })
-            else:
-                # Normal ReShade case - handle WINEDLLOVERRIDES
-                # Remove any existing WINEDLLOVERRIDES
-                config_data[config_key][env_key] = [
-                    env for env in config_data[config_key][env_key] 
-                    if env.get("key") != "WINEDLLOVERRIDES"
-                ]
-                
-                # Add new WINEDLLOVERRIDES if not removing
-                if dll_override != "remove":
-                    config_data[config_key][env_key].append({
-                        "key": "WINEDLLOVERRIDES",
-                        "value": f"d3dcompiler_47=n;{dll_override}=n,b"
-                    })
             
             # Write back the updated config
             with open(config_file_path, 'w', encoding='utf-8') as f:
