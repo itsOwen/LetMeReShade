@@ -1,4 +1,4 @@
-// src/SteamGamesSection.tsx
+// src/SteamGamesSection.tsx - Complete updated version with integrated detection
 import { useState, useEffect } from "react";
 import {
   PanelSection,
@@ -14,7 +14,6 @@ import { callable } from "@decky/api";
 const manageGameReShade = callable<[string, string, string, string, string], ReShadeResponse>("manage_game_reshade");
 const checkReShadePath = callable<[], PathCheckResponse>("check_reshade_path");
 const listInstalledGames = callable<[], GameListResponse>("list_installed_games");
-const detectLinuxGame = callable<[string], LinuxGameDetectionResponse>("detect_linux_game");
 const findGameExecutablePath = callable<[string], ExecutableDetectionResponse>("find_game_executable_path");
 const logError = callable<[string], void>("log_error");
 
@@ -45,15 +44,6 @@ interface GameListResponse {
   message?: string;
 }
 
-interface LinuxGameDetectionResponse {
-  status: string;
-  is_linux_game: boolean;
-  confidence: string;
-  reasons: string[];
-  details?: any;
-  message?: string;
-}
-
 interface ExecutableInfo {
   path: string;
   directory_path: string;
@@ -72,6 +62,18 @@ interface DetectionResult {
   all_executables?: ExecutableInfo[];
   confidence?: string;
   message?: string;
+  // Integrated Linux detection fields
+  is_linux_game?: boolean;
+  linux_confidence?: string;
+  linux_reasons?: string[];
+  linux_indicators?: any;
+  scan_summary?: {
+    total_files_scanned: number;
+    windows_executables: number;
+    main_windows_executables: number;
+    linux_executables: number;
+    linux_indicators_found: number;
+  };
 }
 
 interface ExecutableDetectionResponse {
@@ -80,6 +82,7 @@ interface ExecutableDetectionResponse {
   enhanced_detection_result?: DetectionResult;
   recommended_method?: string;
   message?: string;
+  linux_game_warning?: boolean;
 }
 
 const SteamGamesSection = () => {
@@ -88,8 +91,6 @@ const SteamGamesSection = () => {
   const [games, setGames] = useState<GameInfo[]>([]);
   const [result, setResult] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
-  const [linuxGameDetection, setLinuxGameDetection] = useState<LinuxGameDetectionResponse | null>(null);
-  const [checkingLinuxGame, setCheckingLinuxGame] = useState<boolean>(false);
   const [executableDetection, setExecutableDetection] = useState<ExecutableDetectionResponse | null>(null);
   const [checkingExecutable, setCheckingExecutable] = useState<boolean>(false);
   const [selectedExecutablePath, setSelectedExecutablePath] = useState<string>('');
@@ -125,33 +126,7 @@ const SteamGamesSection = () => {
     fetchGames();
   }, []);
 
-  // Check for Linux game when a game is selected
-  useEffect(() => {
-    const checkLinuxGame = async () => {
-      if (!selectedGame) {
-        setLinuxGameDetection(null);
-        return;
-      }
-
-      try {
-        setCheckingLinuxGame(true);
-        console.log(`Checking Linux game detection for: ${selectedGame.name} (${selectedGame.appid})`);
-        const detection = await detectLinuxGame(selectedGame.appid);
-        console.log('Linux game detection result:', detection);
-        setLinuxGameDetection(detection);
-      } catch (error) {
-        console.error('Linux game detection error:', error);
-        await logError(`Linux game detection error: ${String(error)}`);
-        setLinuxGameDetection(null);
-      } finally {
-        setCheckingLinuxGame(false);
-      }
-    };
-
-    checkLinuxGame();
-  }, [selectedGame]);
-
-  // Check executable detection when a game is selected
+  // Unified detection - one call for both executable and Linux detection
   useEffect(() => {
     const checkExecutableDetection = async () => {
       if (!selectedGame) {
@@ -186,6 +161,35 @@ const SteamGamesSection = () => {
     checkExecutableDetection();
   }, [selectedGame]);
 
+  // Helper function to extract Linux detection info from integrated result
+  const getLinuxDetectionInfo = () => {
+    if (!executableDetection) return null;
+    
+    // Check enhanced detection result for Linux info
+    const enhancedResult = executableDetection.enhanced_detection_result;
+    if (enhancedResult && (enhancedResult.is_linux_game || enhancedResult.status === "linux_game_detected")) {
+      return {
+        is_linux_game: enhancedResult.is_linux_game || enhancedResult.status === "linux_game_detected",
+        confidence: enhancedResult.linux_confidence || "medium",
+        reasons: enhancedResult.linux_reasons || [],
+        scan_summary: enhancedResult.scan_summary
+      };
+    }
+    
+    // Check Steam logs result for Linux info
+    const steamResult = executableDetection.steam_logs_result;
+    if (steamResult && (steamResult.is_linux_game || steamResult.status === "linux_game_detected")) {
+      return {
+        is_linux_game: steamResult.is_linux_game || steamResult.status === "linux_game_detected",
+        confidence: steamResult.linux_confidence || "medium",
+        reasons: steamResult.linux_reasons || [],
+        scan_summary: steamResult.scan_summary
+      };
+    }
+    
+    return null;
+  };
+
   const handlePatch = async () => {
     if (!selectedGame) {
       setResult('Please select a game.');
@@ -197,15 +201,33 @@ const SteamGamesSection = () => {
       return;
     }
 
-    // Check if it's a Linux game and warn user
-    if (linuxGameDetection?.is_linux_game && linuxGameDetection.confidence !== "low") {
-      // Create a custom modal content with proper formatting
+    // Check integrated Linux detection
+    const linuxInfo = getLinuxDetectionInfo();
+    if (linuxInfo?.is_linux_game && linuxInfo.confidence !== "low") {
+      // Create enhanced Linux game warning modal
       const LinuxGameModalContent = () => (
         <div style={{ textAlign: 'left' }}>
           <p style={{ marginBottom: '16px' }}>
             This appears to be a Linux version of <strong>{selectedGame.name}</strong>. 
             ReShade only works with Windows games running through Proton.
           </p>
+          
+          <div style={{ marginBottom: '16px', padding: '8px', backgroundColor: 'rgba(255, 193, 7, 0.1)', borderRadius: '4px' }}>
+            <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+              Detection Confidence: {linuxInfo.confidence.toUpperCase()}
+            </div>
+            {linuxInfo.reasons && linuxInfo.reasons.length > 0 && (
+              <div style={{ fontSize: '0.9em' }}>
+                Detected: {linuxInfo.reasons.slice(0, 2).join(', ')}
+              </div>
+            )}
+            {linuxInfo.scan_summary && (
+              <div style={{ fontSize: '0.8em', marginTop: '4px', opacity: 0.8 }}>
+                Scanned {linuxInfo.scan_summary.total_files_scanned} files: 
+                {linuxInfo.scan_summary.linux_executables} Linux, {linuxInfo.scan_summary.windows_executables} Windows
+              </div>
+            )}
+          </div>
           
           <p style={{ marginBottom: '8px', fontWeight: 'bold' }}>To fix this:</p>
           <div style={{ marginBottom: '16px', paddingLeft: '8px' }}>
@@ -360,59 +382,75 @@ const SteamGamesSection = () => {
     }
   };
 
-  const renderLinuxGameWarning = () => {
-    console.log('renderLinuxGameWarning called, linuxGameDetection:', linuxGameDetection);
-    
-    if (!linuxGameDetection) {
-      console.log('No Linux game detection data');
-      return null;
-    }
-    
-    if (linuxGameDetection.status !== "success") {
-      console.log('Linux game detection failed:', linuxGameDetection.message);
-      return null;
-    }
-    
-    if (!linuxGameDetection.is_linux_game) {
-      console.log('Game is not detected as Linux game');
-      return null;
-    }
-    
-    console.log(`Linux game detected with confidence: ${linuxGameDetection.confidence}`);
-    
-    if (linuxGameDetection.confidence === "low") {
-      console.log('Confidence is low, not showing warning');
-      return null; // Don't show warning for low confidence
-    }
+  // Updated rendering function for integrated detection info
+  const renderDetectionInfo = () => {
+    if (!executableDetection || executableDetection.status !== "success") return null;
 
-    const confidenceColor = linuxGameDetection.confidence === "high" ? "#ff6b6b" : "#ffa726";
-    
-    console.log('Rendering Linux game warning');
+    const enhancedResult = executableDetection.enhanced_detection_result;
+    const linuxInfo = getLinuxDetectionInfo();
+
     return (
-      <PanelSectionRow>
-        <div style={{
-          padding: '12px',
-          marginTop: '8px',
-          backgroundColor: confidenceColor,
-          borderRadius: '4px',
-          color: 'white'
-        }}>
-          <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
-            ⚠️ Linux Game Detected ({linuxGameDetection.confidence} confidence)
-          </div>
-          <div style={{ fontSize: '0.9em', marginBottom: '8px' }}>
-            This appears to be a Linux version. ReShade requires Windows version through Proton.
-          </div>
-          <div style={{ fontSize: '0.85em' }}>
-            <strong>Fix:</strong> Properties → Compatibility → Force Proton → Reinstall game
-          </div>
-          {linuxGameDetection.reasons && linuxGameDetection.reasons.length > 0 && (
-            <div style={{ fontSize: '0.8em', marginTop: '8px', opacity: 0.9 }}>
-              <strong>Detected:</strong> {linuxGameDetection.reasons.slice(0, 2).join(', ')}
+      <>
+        {/* Show Linux warning if detected */}
+        {linuxInfo?.is_linux_game && linuxInfo.confidence !== "low" && (
+          <PanelSectionRow>
+            <div style={{
+              padding: '12px',
+              marginTop: '8px',
+              backgroundColor: linuxInfo.confidence === "high" ? "#ff6b6b" : "#ffa726",
+              borderRadius: '4px',
+              color: 'white'
+            }}>
+              <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+                ⚠️ Linux Game Detected ({linuxInfo.confidence} confidence)
+              </div>
+              <div style={{ fontSize: '0.9em', marginBottom: '8px' }}>
+                This appears to be a Linux version. ReShade requires Windows version through Proton.
+              </div>
+              <div style={{ fontSize: '0.85em' }}>
+                <strong>Fix:</strong> Properties → Compatibility → Force Proton → Reinstall game
+              </div>
+              {linuxInfo.reasons && linuxInfo.reasons.length > 0 && (
+                <div style={{ fontSize: '0.8em', marginTop: '8px', opacity: 0.9 }}>
+                  <strong>Detected:</strong> {linuxInfo.reasons.slice(0, 2).join(', ')}
+                </div>
+              )}
+              {linuxInfo.scan_summary && (
+                <div style={{ fontSize: '0.8em', marginTop: '4px', opacity: 0.9 }}>
+                  Found: {linuxInfo.scan_summary.linux_executables} Linux files, {linuxInfo.scan_summary.windows_executables} Windows files
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      </PanelSectionRow>
+          </PanelSectionRow>
+        )}
+
+        {/* Show scan summary if available */}
+        {enhancedResult?.scan_summary && (
+          <PanelSectionRow>
+            <div style={{
+              padding: '8px',
+              marginTop: '8px',
+              backgroundColor: 'var(--decky-highlighted-ui-bg)',
+              borderRadius: '4px',
+              border: '1px solid var(--decky-subtle-border)',
+              fontSize: '0.85em'
+            }}>
+              <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+                📊 Scan Results: {enhancedResult.scan_summary.total_files_scanned} files analyzed
+              </div>
+              <div>
+                Windows: {enhancedResult.scan_summary.main_windows_executables} executables • 
+                Linux: {enhancedResult.scan_summary.linux_executables} executables
+                {enhancedResult.scan_summary.linux_indicators_found > 0 && 
+                  ` • ${enhancedResult.scan_summary.linux_indicators_found} Linux indicators`
+                }
+              </div>
+            </div>
+          </PanelSectionRow>
+        )}
+
+        {renderExecutableSelection()}
+      </>
     );
   };
 
@@ -422,6 +460,9 @@ const SteamGamesSection = () => {
     const steamLogsResult = executableDetection.steam_logs_result;
     const enhancedResult = executableDetection.enhanced_detection_result;
     const recommendedMethod = executableDetection.recommended_method;
+
+    // Skip if we detected a Linux game
+    if (enhancedResult?.status === "linux_game_detected") return null;
 
     const executableOptions: Array<{
       path: string;
@@ -467,11 +508,6 @@ const SteamGamesSection = () => {
         }
       });
     }
-
-    // Debug: log what we found
-    console.log('Steam logs result:', steamLogsResult);
-    console.log('Enhanced result:', enhancedResult);
-    console.log('Final executable options:', executableOptions);
 
     if (executableOptions.length === 0) return null;
 
@@ -597,41 +633,15 @@ const SteamGamesSection = () => {
             />
           </PanelSectionRow>
 
-          {selectedGame && (checkingLinuxGame || checkingExecutable) && (
+          {selectedGame && checkingExecutable && (
             <PanelSectionRow>
               <div style={{ fontSize: '0.9em', opacity: 0.7 }}>
-                🔍 Analyzing game... {checkingLinuxGame && "Checking version"} {checkingExecutable && "Detecting executable"}
+                🔍 Analyzing game directory (Windows/Linux detection + executable analysis)...
               </div>
             </PanelSectionRow>
           )}
 
-          {/* Debug info for Linux game detection - temporary */}
-          {selectedGame && linuxGameDetection && (
-            <PanelSectionRow>
-              <div style={{
-                padding: '8px',
-                backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                borderRadius: '4px',
-                fontSize: '0.8em',
-                marginTop: '8px'
-              }}>
-                <div><strong>Debug:</strong> Linux Detection Status: {linuxGameDetection.status}</div>
-                {linuxGameDetection.status === "success" && (
-                  <>
-                    <div>Is Linux Game: {linuxGameDetection.is_linux_game ? "YES" : "NO"}</div>
-                    <div>Confidence: {linuxGameDetection.confidence}</div>
-                    <div>Reasons: {linuxGameDetection.reasons?.length || 0}</div>
-                  </>
-                )}
-                {linuxGameDetection.status === "error" && (
-                  <div>Error: {linuxGameDetection.message}</div>
-                )}
-              </div>
-            </PanelSectionRow>
-          )}
-
-          {renderLinuxGameWarning()}
-          {renderExecutableSelection()}
+          {renderDetectionInfo()}
 
           {selectedGame && (
             <PanelSectionRow>

@@ -1,4 +1,3 @@
-// src/HeroicGamesSection.tsx
 import { useState, useEffect } from "react";
 import {
   PanelSection,
