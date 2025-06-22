@@ -22,17 +22,14 @@ class Plugin:
             'RESHADE_VERSION': 'latest',
             'AUTOHDR_ENABLED': '0'
         }
-        # Separate base paths for ReShade and VkBasalt
+        # Main paths for ReShade
         self.main_path = os.path.join(self.environment['XDG_DATA_HOME'], 'reshade')
-        self.vkbasalt_base_path = os.path.join(self.environment['XDG_DATA_HOME'], 'vkbasalt')
-        self.vkbasalt_path = os.path.join(self.vkbasalt_base_path, 'installation')
         
         # Cache for executable paths
         self.executable_cache = {}
         
         # Create necessary directories
         os.makedirs(self.main_path, exist_ok=True)
-        os.makedirs(self.vkbasalt_path, exist_ok=True)
 
     def _get_assets_dir(self) -> Path:
         """Get the assets directory, checking both possible locations"""
@@ -169,13 +166,12 @@ class Plugin:
             }
 
     async def find_game_executable_enhanced(self, appid: str) -> dict:
-        """Enhanced executable detection using discovered patterns"""
+        """Enhanced executable detection with simplified Linux game detection"""
         try:
-            decky.logger.info(f"Enhanced executable detection for App ID: {appid}")
+            decky.logger.info(f"Enhanced detection with simplified Linux check for App ID: {appid}")
             
-            # Get the base game path using existing method - but use the BASE path, not the detected exe path
+            # Get the base game path using existing method
             try:
-                # Get the raw base game installation path
                 steam_root = Path(decky.HOME) / ".steam" / "steam"
                 library_file = steam_root / "steamapps" / "libraryfolders.vdf"
 
@@ -195,111 +191,219 @@ class Plugin:
                     manifest_path = Path(library_path) / "steamapps" / f"appmanifest_{appid}.acf"
                     if manifest_path.exists():
                         with open(manifest_path, "r", encoding="utf-8") as manifest:
-                            for line in manifest:
+                            manifest_content = manifest.read()
+                            for line in manifest_content.split('\n'):
                                 if '"installdir"' in line:
                                     install_dir = line.split('"installdir"')[1].strip().strip('"')
                                     base_game_path = str(Path(library_path) / "steamapps" / "common" / install_dir)
-                                    game_name = install_dir  # Save the actual game name from Steam
-                                    break
-                                elif '"name"' in line:  # Also look for the game's real name
+                                    game_name = install_dir
+                                elif '"name"' in line:
                                     game_title = line.split('"name"')[1].strip().strip('"')
-                                    if not game_name:  # Only set if we haven't found installdir yet
+                                    if not game_name:
                                         game_name = game_title
                         break
 
                 if not base_game_path:
                     return {"status": "error", "message": f"Could not find installation directory for AppID: {appid}"}
                     
-                decky.logger.info(f"Base game path for detection: {base_game_path}")
+                decky.logger.info(f"Base game path: {base_game_path}")
                 decky.logger.info(f"Game name from Steam: {game_name}")
+                
+                # Check appmanifest for Linux indicators
+                manifest_has_linux = False
+                for library_path in library_paths:
+                    manifest_path = Path(library_path) / "steamapps" / f"appmanifest_{appid}.acf"
+                    if manifest_path.exists():
+                        with open(manifest_path, "r", encoding="utf-8") as manifest:
+                            manifest_content = manifest.read().lower()
+                            if "linux" in manifest_content:
+                                manifest_has_linux = True
+                                decky.logger.info("Found 'linux' in appmanifest")
+                                break
                 
             except Exception as e:
                 return {"status": "error", "message": str(e)}
             
-            # Find all executables in the game directory
+            game_path_obj = Path(base_game_path)
+            if not game_path_obj.exists():
+                return {"status": "error", "message": f"Game path not found: {base_game_path}"}
+            
+            # Simplified Linux detection - only check for key indicators
+            linux_indicators = {
+                'so_files': [],
+                'sh_files': []
+            }
+            
             all_executables = []
             
-            decky.logger.info(f"Walking directory tree starting from: {base_game_path}")
+            decky.logger.info(f"Scanning directory tree for executables and Linux indicators: {base_game_path}")
+            
+            # Single directory traversal
             for root, dirs, files in os.walk(base_game_path):
                 for file in files:
+                    file_path = os.path.join(root, file)
+                    file_obj = Path(file_path)
+                    rel_path = os.path.relpath(file_path, base_game_path)
+                    
+                    try:
+                        file_size = os.path.getsize(file_path)
+                    except:
+                        continue
+                    
+                    # Check for Windows executables
                     if file.lower().endswith('.exe'):
-                        exe_path = os.path.join(root, file)
-                        try:
-                            file_size = os.path.getsize(exe_path)
-                            rel_path = os.path.relpath(exe_path, base_game_path)
-                            
-                            all_executables.append({
-                                "path": exe_path,
-                                "directory_path": os.path.dirname(exe_path),
-                                "relative_path": rel_path,
-                                "filename": file,
-                                "size": file_size,
-                                "size_mb": round(file_size / (1024 * 1024), 1)
-                            })
-                            decky.logger.debug(f"Found exe: {file} ({rel_path}) - {round(file_size / (1024 * 1024), 1)}MB")
-                        except Exception as e:
-                            decky.logger.warning(f"Error getting size for {exe_path}: {str(e)}")
-                            continue
+                        all_executables.append({
+                            "path": file_path,
+                            "directory_path": os.path.dirname(file_path),
+                            "relative_path": rel_path,
+                            "filename": file,
+                            "size": file_size,
+                            "size_mb": round(file_size / (1024 * 1024), 1),
+                            "type": "windows_exe"
+                        })
+                        decky.logger.debug(f"Found Windows exe: {file} ({rel_path}) - {round(file_size / (1024 * 1024), 1)}MB")
+                    
+                    # Simplified Linux detection - only .so and .sh files
+                    file_lower = file.lower()
+                    
+                    # Check for .so files
+                    if file_lower.endswith('.so') or '.so.' in file_lower:
+                        linux_indicators['so_files'].append(rel_path)
+                        decky.logger.debug(f"Found .so file: {rel_path}")
+                    
+                    # Check for .sh files
+                    elif file_lower.endswith('.sh'):
+                        linux_indicators['sh_files'].append(rel_path)
+                        decky.logger.debug(f"Found .sh file: {rel_path}")
             
-            if not all_executables:
+            # Filter out utility executables from Windows list
+            main_windows_executables = []
+            for exe in all_executables:
+                if exe["type"] == "windows_exe":
+                    exe_name = exe["filename"].lower()
+                    if not any(skip in exe_name for skip in ["unins", "redist", "vcredist", "directx", "setup", "install"]):
+                        main_windows_executables.append(exe)
+            
+            # Simplified Linux game determination
+            is_linux_game = False
+            linux_confidence = "low"
+            linux_reasons = []
+            
+            # Check for Linux indicators
+            so_file_count = len(linux_indicators['so_files'])
+            sh_file_count = len(linux_indicators['sh_files'])
+            
+            if manifest_has_linux:
+                is_linux_game = True
+                linux_confidence = "high"
+                linux_reasons.append("Steam manifest contains 'linux'")
+            
+            if so_file_count >= 5:  # Multiple .so files is a strong indicator
+                is_linux_game = True
+                if linux_confidence != "high":
+                    linux_confidence = "medium"
+                linux_reasons.append(f"Found {so_file_count} shared library (.so) files")
+            
+            if sh_file_count >= 2:  # Multiple shell scripts
+                is_linux_game = True
+                if linux_confidence == "low":
+                    linux_confidence = "medium"
+                linux_reasons.append(f"Found {sh_file_count} shell script (.sh) files")
+            
+            # If no Windows executables and Linux indicators present
+            if not main_windows_executables and (so_file_count > 0 or sh_file_count > 0):
+                is_linux_game = True
+                if linux_confidence == "low":
+                    linux_confidence = "medium"
+                linux_reasons.append("No Windows executables found, Linux files present")
+            
+            # If it's determined to be a Linux game, return early with warning
+            if is_linux_game and linux_confidence in ["high", "medium"]:
                 return {
-                    "status": "error",
-                    "method": "enhanced_detection",
-                    "message": f"No executables found in game directory: {base_game_path}"
+                    "status": "linux_game_detected",
+                    "method": "enhanced_detection_with_simplified_linux_check",
+                    "is_linux_game": True,
+                    "linux_confidence": linux_confidence,
+                    "linux_reasons": linux_reasons,
+                    "linux_indicators": linux_indicators,
+                    "windows_executables_found": len(main_windows_executables),
+                    "message": "Linux version detected - ReShade requires Windows version through Proton",
+                    "details": {
+                        "game_path": base_game_path,
+                        "total_files_scanned": len(all_executables),
+                        "windows_exe_count": len(main_windows_executables),
+                        "so_files_count": so_file_count,
+                        "sh_files_count": sh_file_count
+                    },
+                    "scan_summary": {
+                        "total_files_scanned": len(all_executables),
+                        "windows_executables": len(all_executables),
+                        "main_windows_executables": len(main_windows_executables),
+                        "so_files": so_file_count,
+                        "sh_files": sh_file_count,
+                        "linux_indicators_found": so_file_count + sh_file_count
+                    }
                 }
             
-            decky.logger.info(f"Found {len(all_executables)} total executables")
+            # Continue with Windows executable analysis if not a Linux game
+            if not main_windows_executables:
+                return {
+                    "status": "error",
+                    "method": "enhanced_detection_with_simplified_linux_check",
+                    "is_linux_game": is_linux_game,
+                    "linux_confidence": linux_confidence,
+                    "message": f"No suitable Windows executables found in game directory: {base_game_path}",
+                    "details": {
+                        "total_executables_found": len(all_executables),
+                        "windows_exe_count": len(all_executables),
+                        "main_windows_exe_count": len(main_windows_executables),
+                        "so_files_count": so_file_count,
+                        "sh_files_count": sh_file_count
+                    },
+                    "scan_summary": {
+                        "total_files_scanned": len(all_executables),
+                        "windows_executables": len(all_executables),
+                        "main_windows_executables": len(main_windows_executables),
+                        "so_files": so_file_count,
+                        "sh_files": sh_file_count,
+                        "linux_indicators_found": so_file_count + sh_file_count
+                    }
+                }
             
-            # Enhanced filtering based on discovered patterns
+            decky.logger.info(f"Found {len(main_windows_executables)} Windows executables for scoring")
+            
+            # ENHANCED SCORING for Windows executables (keeping existing logic)
             def score_executable(exe_info):
-                score = 50  # Start with a base score instead of 0
+                score = 50
                 filename = exe_info["filename"].lower()
-                filename_no_ext = os.path.splitext(filename)[0]  # Remove extension
+                filename_no_ext = os.path.splitext(filename)[0]
                 rel_path = exe_info["relative_path"].lower()
                 size_mb = exe_info["size_mb"]
                 
                 decky.logger.debug(f"Scoring {filename} at {rel_path}")
                 
-                # LESS aggressive utility filtering - only skip very obvious ones
-                utility_keywords = ["unins", "setup", "vcredist", "directx", "redist"]
-                if any(skip in filename for skip in utility_keywords):
-                    decky.logger.debug(f"  Utility file detected: {filename}")
-                    return 0  # Set to 0 instead of negative
-                
                 # Enhanced game name matching with multiple normalization approaches
-                # 1. Get directory name from base path
-                dir_name = os.path.basename(base_game_path).lower()
-                
-                # 2. Clean up names by removing spaces, special chars, etc.
-                clean_dir_name = re.sub(r'[^a-z0-9]', '', dir_name)
-                clean_game_name = re.sub(r'[^a-z0-9]', '', game_name.lower()) if game_name else clean_dir_name
+                clean_game_name = re.sub(r'[^a-z0-9]', '', game_name.lower()) if game_name else ""
                 clean_filename = re.sub(r'[^a-z0-9]', '', filename_no_ext)
                 
-                # 3. Split into words for more flexible matching
-                dir_words = re.findall(r'[a-z0-9]+', dir_name)
-                game_name_words = re.findall(r'[a-z0-9]+', game_name.lower()) if game_name else dir_words
+                # Split into words for more flexible matching
+                game_name_words = re.findall(r'[a-z0-9]+', game_name.lower()) if game_name else []
                 filename_words = re.findall(r'[a-z0-9]+', filename_no_ext)
                 
-                # Log the normalized values for debugging
-                decky.logger.debug(f"  Clean names - Dir: '{clean_dir_name}', Game: '{clean_game_name}', File: '{clean_filename}'")
-                
-                # 4. Calculate various types of matches
+                # Calculate various types of matches
                 name_match_score = 0
                 
                 # Exact matches (highest priority)
-                if clean_filename == clean_game_name or clean_filename == clean_dir_name:
+                if clean_filename == clean_game_name:
                     name_match_score += 60
                     decky.logger.debug(f"  Exact name match: +60 (normalized names match exactly)")
                 
                 # Substantial partial matches (high priority)
-                elif (clean_game_name in clean_filename or clean_filename in clean_game_name or
-                    clean_dir_name in clean_filename or clean_filename in clean_dir_name):
+                elif clean_game_name and (clean_game_name in clean_filename or clean_filename in clean_game_name):
                     # Calculate how much of the string matches
                     match_ratio = max(
                         len(clean_game_name) / len(clean_filename) if len(clean_filename) > 0 else 0,
-                        len(clean_filename) / len(clean_game_name) if len(clean_game_name) > 0 else 0,
-                        len(clean_dir_name) / len(clean_filename) if len(clean_filename) > 0 else 0,
-                        len(clean_filename) / len(clean_dir_name) if len(clean_dir_name) > 0 else 0
+                        len(clean_filename) / len(clean_game_name) if len(clean_game_name) > 0 else 0
                     )
                     # Scale the score based on how much of the string matches (max 45 points)
                     partial_score = min(45, int(match_ratio * 45))
@@ -308,18 +412,15 @@ class Plugin:
                 
                 # Word-level matches (medium priority)
                 else:
-                    # Find matching words between game name/dir and filename
-                    matching_game_words = set(game_name_words).intersection(set(filename_words))
-                    matching_dir_words = set(dir_words).intersection(set(filename_words))
+                    # Find matching words between game name and filename
+                    matching_words = set(game_name_words).intersection(set(filename_words))
                     
-                    # Use the best match (dir or game name)
-                    best_matches = matching_game_words if len(matching_game_words) > len(matching_dir_words) else matching_dir_words
-                    if best_matches:
+                    if matching_words:
                         # Calculate match percentage relative to the source words
-                        match_percentage = len(best_matches) / len(game_name_words or dir_words) if (game_name_words or dir_words) else 0
-                        word_score = len(best_matches) * 8 * (1 + match_percentage)  # Scale based on percentage match
+                        match_percentage = len(matching_words) / len(game_name_words) if game_name_words else 0
+                        word_score = len(matching_words) * 8 * (1 + match_percentage)  # Scale based on percentage match
                         name_match_score += min(40, round(word_score))  # Cap at 40 points
-                        decky.logger.debug(f"  Word match: +{min(40, round(word_score))} ({best_matches})")
+                        decky.logger.debug(f"  Word match: +{min(40, round(word_score))} ({matching_words})")
                 
                 # Common game executable names bonus
                 if any(common in filename_no_ext.lower() for common in ["game", "main", "client", "app", "play"]):
@@ -389,12 +490,11 @@ class Plugin:
                 decky.logger.debug(f"  Final score for {filename}: {score} (name match: {name_match_score})")
                 return score
             
-            # Score all executables - use much lower threshold
+            # Score all Windows executables
             scored_executables = []
-            for exe_info in all_executables:
+            for exe_info in main_windows_executables:
                 score = score_executable(exe_info)
-                # Much more permissive threshold - only exclude very obvious utilities
-                if score > 0:  # Changed from -50 to 0 for 0-100 scale
+                if score > 0:
                     scored_executables.append({
                         **exe_info,
                         "score": score
@@ -403,51 +503,54 @@ class Plugin:
                     decky.logger.debug(f"Filtered out {exe_info['filename']} with score {score}")
             
             if not scored_executables:
-                # If we filtered everything out, include everything with any positive score
-                decky.logger.warning("All executables filtered out, using less restrictive filtering")
-                for exe_info in all_executables:
-                    score = score_executable(exe_info)
-                    if score >= 0:  # Even more permissive
-                        scored_executables.append({
-                            **exe_info,
-                            "score": score
-                        })
+                return {
+                    "status": "error",
+                    "method": "enhanced_detection_with_simplified_linux_check",
+                    "is_linux_game": is_linux_game,
+                    "message": "No suitable Windows executables found after scoring",
+                    "scan_summary": {
+                        "total_files_scanned": len(all_executables),
+                        "windows_executables": len(all_executables),
+                        "main_windows_executables": len(main_windows_executables),
+                        "so_files": so_file_count,
+                        "sh_files": sh_file_count,
+                        "linux_indicators_found": so_file_count + sh_file_count
+                    }
+                }
             
-            if not scored_executables:
-                # Last resort: include everything
-                decky.logger.warning("Still no executables, including all found")
-                for exe_info in all_executables:
-                    scored_executables.append({
-                        **exe_info,
-                        "score": score_executable(exe_info)
-                    })
-            
-            # Sort by score (highest first) and take top 5
+            # Sort and get top results
             scored_executables.sort(key=lambda x: x["score"], reverse=True)
             top_executables = scored_executables[:5]
-            
             best_executable = top_executables[0]
             
-            decky.logger.info(f"Total executables after filtering: {len(scored_executables)}")
-            decky.logger.info(f"Top 5 executables:")
-            for i, exe in enumerate(top_executables):
-                decky.logger.info(f"  {i+1}. {exe['filename']} (score: {exe['score']}) at {exe['relative_path']}")
+            decky.logger.info(f"Top executable: {best_executable['filename']} (score: {best_executable['score']})")
             
             return {
                 "status": "success",
-                "method": "enhanced_detection", 
+                "method": "enhanced_detection_with_simplified_linux_check",
                 "executable_path": best_executable["path"],
                 "directory_path": best_executable["directory_path"],
                 "filename": best_executable["filename"],
-                "all_executables": top_executables,  # Top 5 for UI
-                "confidence": "high" if best_executable["score"] > 70 else "medium"
+                "all_executables": top_executables,
+                "confidence": "high" if best_executable["score"] > 70 else "medium",
+                "is_linux_game": is_linux_game,
+                "linux_confidence": linux_confidence,
+                "linux_reasons": linux_reasons if linux_reasons else None,
+                "scan_summary": {
+                    "total_files_scanned": len(all_executables),
+                    "windows_executables": len(all_executables),
+                    "main_windows_executables": len(main_windows_executables),
+                    "so_files": so_file_count,
+                    "sh_files": sh_file_count,
+                    "linux_indicators_found": so_file_count + sh_file_count
+                }
             }
             
         except Exception as e:
             decky.logger.error(f"Enhanced detection error: {str(e)}")
             return {
                 "status": "error",
-                "method": "enhanced_detection", 
+                "method": "enhanced_detection_with_simplified_linux_check",
                 "message": str(e)
             }
 
@@ -461,10 +564,21 @@ class Plugin:
             # Method 1: Steam console logs
             steam_logs_result = await self.parse_steam_logs_for_executable(appid)
             
-            # Method 2: Enhanced detection (always run now)
+            # Method 2: Enhanced detection (now includes Linux detection)
             enhanced_result = await self.find_game_executable_enhanced(appid)
             
-            # Determine recommended method
+            # Handle special case where enhanced detection found a Linux game
+            if enhanced_result.get("status") == "linux_game_detected":
+                # Return the Linux detection as the enhanced result
+                return {
+                    "status": "success", 
+                    "steam_logs_result": steam_logs_result,
+                    "enhanced_detection_result": enhanced_result,
+                    "recommended_method": "enhanced_detection",  # Linux detection takes priority
+                    "linux_game_warning": True
+                }
+            
+            # Determine recommended method for Windows games
             recommended_method = "steam_logs"
             if steam_logs_result["status"] != "success":
                 recommended_method = "enhanced_detection"
@@ -622,7 +736,7 @@ class Plugin:
                     if best_matches:
                         # Calculate match percentage relative to the source words
                         match_percentage = len(best_matches) / len(game_name_words) if game_name_words else 0
-                        word_score = len(best_matches) * 8 * (1 + match_percentage)  # Scale based on percentage match
+                        word_score = len(best_matches) * 5.0 * (1 + match_percentage)  # Scale based on percentage match
                         name_match_score += min(40, round(word_score))  # Cap at 40 points
                         decky.logger.debug(f"  Word match: +{min(40, round(word_score))} ({best_matches})")
                 
@@ -1219,10 +1333,6 @@ class Plugin:
             "version_info": version_info
         }
 
-    async def check_vkbasalt_path(self) -> dict:
-        marker_file = Path(self.vkbasalt_base_path) / ".installed"
-        return {"exists": marker_file.exists()}
-
     async def run_install_reshade(self, with_addon: bool = False, version: str = "latest", with_autohdr: bool = False, selected_shaders: list = None) -> dict:
         try:
             assets_dir = self._get_assets_dir()
@@ -1319,38 +1429,6 @@ class Plugin:
             decky.logger.error(f"Install error: {str(e)}")
             return {"status": "error", "message": str(e)}
 
-    async def run_install_vkbasalt(self) -> dict:
-        try:
-            assets_dir = self._get_assets_dir()
-            script_path = assets_dir / "vkbasalt-install.sh"
-            
-            if not script_path.exists():
-                decky.logger.error(f"VkBasalt install script not found: {script_path}")
-                return {"status": "error", "message": "VkBasalt install script not found"}
-
-            process = subprocess.run(
-                ["/bin/bash", str(script_path)],
-                cwd=str(assets_dir),
-                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib', 'VKBASALT_PATH': self.vkbasalt_path},
-                capture_output=True,
-                text=True
-            )
-
-            decky.logger.info(f"VkBasalt install output:\n{process.stdout}")
-            if process.stderr:
-                decky.logger.error(f"VkBasalt install errors:\n{process.stderr}")
-
-            if process.returncode != 0:
-                return {"status": "error", "message": process.stderr}
-
-            marker_file = Path(self.vkbasalt_base_path) / ".installed"
-            marker_file.touch()
-            
-            return {"status": "success", "output": "VkBasalt installed successfully!"}
-        except Exception as e:
-            decky.logger.error(f"VkBasalt install error: {str(e)}")
-            return {"status": "error", "message": str(e)}
-
     async def run_uninstall_reshade(self) -> dict:
         try:
             assets_dir = self._get_assets_dir()
@@ -1385,181 +1463,6 @@ class Plugin:
             return {"status": "success", "output": "ReShade uninstalled"}
         except Exception as e:
             decky.logger.error(str(e))
-            return {"status": "error", "message": str(e)}
-
-    async def run_uninstall_vkbasalt(self) -> dict:
-        try:
-            assets_dir = self._get_assets_dir()
-            script_path = assets_dir / "vkbasalt-uninstall.sh"
-            
-            if not script_path.exists():
-                return {"status": "error", "message": "VkBasalt uninstall script not found"}
-
-            process = subprocess.run(
-                ["/bin/bash", str(script_path)],
-                cwd=str(assets_dir),
-                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib', 'VKBASALT_PATH': self.vkbasalt_path},
-                capture_output=True,
-                text=True
-            )
-            
-            if process.returncode != 0:
-                return {"status": "error", "message": process.stderr}
-
-            marker_file = Path(self.vkbasalt_base_path) / ".installed"
-            if marker_file.exists():
-                marker_file.unlink()
-                    
-            return {"status": "success", "output": "VkBasalt uninstalled"}
-        except Exception as e:
-            decky.logger.error(str(e))
-            return {"status": "error", "message": str(e)}
-
-    async def detect_linux_game(self, appid: str) -> dict:
-        """Detect if a Steam game is running the Linux version instead of Windows version"""
-        try:
-            game_path = self._find_game_path(appid)
-            decky.logger.info(f"Checking if game is Linux version: {game_path}")
-            
-            # Convert to Path object for easier handling
-            game_path_obj = Path(game_path)
-            
-            # Check 1: Look for .exe files (Windows indicator)
-            exe_files = list(game_path_obj.rglob("*.exe"))
-            has_exe_files = len(exe_files) > 0
-            
-            # Filter out known utility/redistributable executables
-            main_exe_files = []
-            for exe in exe_files:
-                exe_name = exe.name.lower()
-                if not any(skip in exe_name for skip in ["unins", "redist", "vcredist", "directx", "setup", "install"]):
-                    main_exe_files.append(exe)
-            
-            has_main_exe = len(main_exe_files) > 0
-            
-            # Check 2: Look for Linux-specific file patterns only (no directories)
-            linux_file_indicators = [
-                "*.x86_64", "*.x86", "*.bin", "*.sh",  # Linux executable patterns
-                "*.so", "*.so.*"  # Linux shared libraries
-            ]
-            
-            linux_files_found = []
-            for pattern in linux_file_indicators:
-                matches = list(game_path_obj.rglob(pattern))
-                # Filter to only include files (not directories)
-                file_matches = [m for m in matches if m.is_file()]
-                if file_matches:
-                    linux_files_found.extend([str(m.relative_to(game_path_obj)) for m in file_matches[:5]])  # Limit to 5 examples
-            
-            # Check 3: Look for Linux executables (files without extension that are ELF binaries)
-            linux_executables = []
-            for file in game_path_obj.iterdir():
-                if file.is_file() and file.suffix == "":  # Files without extension
-                    try:
-                        # Check if file is executable
-                        if file.stat().st_mode & 0o111:  # Has execute permission
-                            # Use 'file' command to check if it's an ELF binary
-                            process = subprocess.run(
-                                ["file", str(file)],
-                                capture_output=True,
-                                text=True
-                            )
-                            if "ELF" in process.stdout:
-                                linux_executables.append(file.name)
-                    except Exception as e:
-                        decky.logger.debug(f"Error checking file {file}: {str(e)}")
-            
-            # Check 4: Look for Unity Linux file indicators (files only)
-            unity_linux_file_patterns = [
-                "UnityPlayer.so",
-                "*_Data/Plugins/x86_64/*.so",
-                "*_Data/Mono/etc/mono/config"
-            ]
-            
-            unity_linux_files = []
-            for pattern in unity_linux_file_patterns:
-                matches = list(game_path_obj.rglob(pattern))
-                # Filter to only include files
-                file_matches = [m for m in matches if m.is_file()]
-                if file_matches:
-                    unity_linux_files.extend([str(m.relative_to(game_path_obj)) for m in file_matches[:3]])
-            
-            # Check 5: Look for other Linux-specific files
-            linux_specific_files = []
-            for file in game_path_obj.rglob("*"):
-                if file.is_file():
-                    file_name = file.name.lower()
-                    # Check for common Linux game files
-                    if any(pattern in file_name for pattern in [
-                        "start.sh", "run.sh", "launch.sh",  # Launch scripts
-                        ".desktop",  # Desktop files
-                        "libc.so", "libstdc++.so", "libgcc_s.so"  # Common Linux libraries
-                    ]):
-                        linux_specific_files.append(str(file.relative_to(game_path_obj)))
-                        if len(linux_specific_files) >= 5:  # Limit examples
-                            break
-            
-            # Decision logic
-            is_linux_game = False
-            confidence = "low"
-            reasons = []
-            
-            # Strong indicators of Linux version
-            if linux_executables:
-                is_linux_game = True
-                confidence = "high"
-                reasons.append(f"Found Linux ELF executables: {', '.join(linux_executables[:3])}")
-            
-            if unity_linux_files:
-                is_linux_game = True
-                confidence = "high"
-                reasons.append(f"Found Unity Linux files: {', '.join(unity_linux_files)}")
-            
-            # Medium indicators
-            if not has_main_exe and len(linux_files_found) >= 3:
-                is_linux_game = True
-                confidence = "medium"
-                reasons.append(f"No Windows .exe files found, but multiple Linux files present")
-            
-            if linux_specific_files:
-                is_linux_game = True
-                confidence = "medium" if confidence == "low" else confidence
-                reasons.append(f"Found Linux-specific files: {', '.join(linux_specific_files[:3])}")
-            
-            # Weak indicators
-            if not has_exe_files and len(linux_files_found) >= 1:
-                is_linux_game = True
-                confidence = "medium" if not reasons else confidence
-                reasons.append("Linux files found, no Windows executables")
-            
-            # Additional context
-            total_files = len([f for f in game_path_obj.rglob("*") if f.is_file()]) if game_path_obj.exists() else 0
-            
-            result = {
-                "status": "success",
-                "is_linux_game": is_linux_game,
-                "confidence": confidence,
-                "reasons": reasons,
-                "details": {
-                    "has_exe_files": has_exe_files,
-                    "has_main_exe": has_main_exe,
-                    "main_exe_count": len(main_exe_files),
-                    "linux_executables": linux_executables,
-                    "linux_files_count": len(linux_files_found),
-                    "linux_specific_files": linux_specific_files,
-                    "unity_linux_files": len(unity_linux_files),
-                    "total_files": total_files,
-                    "game_path": str(game_path)
-                }
-            }
-            
-            decky.logger.info(f"Linux game detection result: {result}")
-            return result
-            
-        except ValueError as e:
-            return {"status": "error", "message": str(e)}
-        except Exception as e:
-            decky.logger.error(f"Error detecting Linux game: {str(e)}")
             return {"status": "error", "message": str(e)}
 
     async def manage_game_reshade(self, appid: str, action: str, dll_override: str = "dxgi", vulkan_mode: str = "", selected_executable_path: str = "") -> dict:
@@ -2165,7 +2068,7 @@ class Plugin:
         return {"status": "error", "message": f"No config file found for app name: {app_name}"}
 
     async def update_heroic_config(self, config_file: str, config_key: str, dll_override: str) -> dict:
-        """Update Heroic game configuration with WINEDLLOVERRIDES for ReShade or ENABLE_VKBASALT for VkBasalt"""
+        """Update Heroic game configuration with WINEDLLOVERRIDES for ReShade"""
         try:
             config_path = os.path.expanduser("~/.var/app/com.heroicgameslauncher.hgl/config/heroic/GamesConfig/")
             config_file_path = os.path.join(config_path, config_file)
@@ -2186,33 +2089,19 @@ class Plugin:
             if env_key not in config_data[config_key]:
                 config_data[config_key][env_key] = []
             
-            # Special case for VkBasalt
-            if dll_override == "vkbasalt":
-                # Remove any existing ENABLE_VKBASALT
-                config_data[config_key][env_key] = [
-                    env for env in config_data[config_key][env_key] 
-                    if env.get("key") != "ENABLE_VKBASALT"
-                ]
-                
-                # Add ENABLE_VKBASALT=1
+            # Handle WINEDLLOVERRIDES
+            # Remove any existing WINEDLLOVERRIDES
+            config_data[config_key][env_key] = [
+                env for env in config_data[config_key][env_key] 
+                if env.get("key") != "WINEDLLOVERRIDES"
+            ]
+            
+            # Add new WINEDLLOVERRIDES if not removing
+            if dll_override != "remove":
                 config_data[config_key][env_key].append({
-                    "key": "ENABLE_VKBASALT",
-                    "value": "1"
+                    "key": "WINEDLLOVERRIDES",
+                    "value": f"d3dcompiler_47=n;{dll_override}=n,b"
                 })
-            else:
-                # Normal ReShade case - handle WINEDLLOVERRIDES
-                # Remove any existing WINEDLLOVERRIDES
-                config_data[config_key][env_key] = [
-                    env for env in config_data[config_key][env_key] 
-                    if env.get("key") != "WINEDLLOVERRIDES"
-                ]
-                
-                # Add new WINEDLLOVERRIDES if not removing
-                if dll_override != "remove":
-                    config_data[config_key][env_key].append({
-                        "key": "WINEDLLOVERRIDES",
-                        "value": f"d3dcompiler_47=n;{dll_override}=n,b"
-                    })
             
             # Write back the updated config
             with open(config_file_path, 'w', encoding='utf-8') as f:
@@ -2356,19 +2245,19 @@ class Plugin:
                 # If no ReShade.ini exists, create a basic one
                 with open(reshade_ini_dst, 'w', encoding='utf-8') as f:
                     f.write("""[GENERAL]
-    EffectSearchPaths=.\\ReShade_shaders
-    TextureSearchPaths=.\\ReShade_shaders
-    PresetPath=.
-    PerformanceMode=0
-    PreprocessorDefinitions=
-    Effects=
-    Techniques=
+EffectSearchPaths=.\\ReShade_shaders
+TextureSearchPaths=.\\ReShade_shaders
+PresetPath=.
+PerformanceMode=0
+PreprocessorDefinitions=
+Effects=
+Techniques=
 
-    [INPUT]
-    KeyOverlay=36
-    KeyNextPreset=0
-    KeyPreviousPreset=0
-    """)
+[INPUT]
+KeyOverlay=36
+KeyNextPreset=0
+KeyPreviousPreset=0
+""")
                 # Set proper permissions (read/write for all)
                 os.chmod(reshade_ini_dst, 0o666)
             
@@ -2380,20 +2269,20 @@ class Plugin:
                 game_name = os.path.basename(game_path)
                 with open(reshade_preset_dst, 'w', encoding='utf-8') as f:
                     f.write(f"""# ReShade Preset Configuration for {game_name}
-    # This file will be automatically populated when you save presets in ReShade
-    # Press HOME key in-game to open ReShade overlay
-    # Go to Settings -> General -> "Reload all shaders" if shaders don't appear
+# This file will be automatically populated when you save presets in ReShade
+# Press HOME key in-game to open ReShade overlay
+# Go to Settings -> General -> "Reload all shaders" if shaders don't appear
 
-    # Example preset configuration:
-    # [Preset1]
-    # Techniques=SMAA,Clarity,LumaSharpen
-    # PreprocessorDefinitions=
+# Example preset configuration:
+# [Preset1]
+# Techniques=SMAA,Clarity,LumaSharpen
+# PreprocessorDefinitions=
 
-    # Uncomment and modify the lines below to create a default preset:
-    # [Default]
-    # Techniques=
-    # PreprocessorDefinitions=
-    """)
+# Uncomment and modify the lines below to create a default preset:
+# [Default]
+# Techniques=
+# PreprocessorDefinitions=
+""")
                 
                 # Set proper permissions for ReShadePreset.ini (read/write for all)
                 os.chmod(reshade_preset_dst, 0o666)
@@ -2419,40 +2308,40 @@ class Plugin:
             
             with open(readme_path, 'w', encoding='utf-8') as f:
                 f.write(f"""ReShade for {os.path.basename(game_path)}
-    ------------------------------------
-    Installed with LetMeReShade plugin for Heroic Games Launcher
+------------------------------------
+Installed with LetMeReShade plugin for Heroic Games Launcher
 
-    DLL Override: {dll_override}
-    Architecture: {arch}-bit
-    Executable Directory: {exe_dir}
-    {f'Selected Executable: {os.path.basename(selected_executable_path)}' if selected_executable_path else 'Auto-detected executable location'}
+DLL Override: {dll_override}
+Architecture: {arch}-bit
+Executable Directory: {exe_dir}
+{f'Selected Executable: {os.path.basename(selected_executable_path)}' if selected_executable_path else 'Auto-detected executable location'}
 
-    Press HOME key in-game to open the ReShade overlay.
+Press HOME key in-game to open the ReShade overlay.
 
-    If shaders are not visible:
-    1. Open the ReShade overlay with HOME key
-    2. Go to Settings tab
-    3. Check paths for "Effect Search Paths" and "Texture Search Paths"
-    4. They should point to the ReShade_shaders folder in this game directory
-    5. If not, update them to: ".\\ReShade_shaders"
+If shaders are not visible:
+1. Open the ReShade overlay with HOME key
+2. Go to Settings tab
+3. Check paths for "Effect Search Paths" and "Texture Search Paths"
+4. They should point to the ReShade_shaders folder in this game directory
+5. If not, update them to: ".\\ReShade_shaders"
 
-    Shader preset files (.ini) will be saved in this game directory.
+Shader preset files (.ini) will be saved in this game directory.
 
-    Files created:
-    - ReShade.ini: Main ReShade configuration
-    - ReShadePreset.ini: Preset configurations (auto-populated when you save presets)
-    - {dll_override}.dll: ReShade DLL
-    - d3dcompiler_47.dll: DirectX shader compiler
-    - ReShade_shaders/: Shader files directory
-    {autohdr_status}
+Files created:
+- ReShade.ini: Main ReShade configuration
+- ReShadePreset.ini: Preset configurations (auto-populated when you save presets)
+- {dll_override}.dll: ReShade DLL
+- d3dcompiler_47.dll: DirectX shader compiler
+- ReShade_shaders/: Shader files directory
+{autohdr_status}
 
-    AutoHDR Compatibility:
-    - Compatible APIs: DXGI, D3D11, D3D12 (DirectX 10/11/12)
-    - Incompatible APIs: D3D9, D3D8, OpenGL32, DDraw, DInput8
-    - Current API: {dll_override} {'(✅ AutoHDR Compatible)' if autohdr_compatible else '(❌ AutoHDR Incompatible)'}
+AutoHDR Compatibility:
+- Compatible APIs: DXGI, D3D11, D3D12 (DirectX 10/11/12)
+- Incompatible APIs: D3D9, D3D8, OpenGL32, DDraw, DInput8
+- Current API: {dll_override} {'(✅ AutoHDR Compatible)' if autohdr_compatible else '(❌ AutoHDR Incompatible)'}
 
-    Note: If ReShadePreset.ini already existed, your previous settings were preserved.
-    """)
+Note: If ReShadePreset.ini already existed, your previous settings were preserved.
+""")
             
             # Set proper permissions for README (read/write for all)
             os.chmod(readme_path, 0o666)

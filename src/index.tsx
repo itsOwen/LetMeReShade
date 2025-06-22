@@ -59,11 +59,6 @@ const loadAutoHdrPreference = callable<[], any>("load_autohdr_preference");
 // Configuration tracking callables
 const loadInstalledConfiguration = callable<[], any>("load_installed_configuration");
 
-// VkBasalt callables
-const checkVkBasaltPath = callable<[], PathCheckResponse>("check_vkbasalt_path");
-const runInstallVkBasalt = callable<[], InstallResult>("run_install_vkbasalt");
-const runUninstallVkBasalt = callable<[], InstallResult>("run_uninstall_vkbasalt");
-
 function ReShadeInstallerSection() {
   const [installing, setInstalling] = useState<boolean>(false);
   const [uninstalling, setUninstalling] = useState<boolean>(false);
@@ -734,130 +729,6 @@ function ReShadeInstallerSection() {
   );
 }
 
-function VkBasaltInstallerSection() {
-  const [installing, setInstalling] = useState<boolean>(false);
-  const [uninstalling, setUninstalling] = useState<boolean>(false);
-  const [installResult, setInstallResult] = useState<InstallResult | null>(null);
-  const [uninstallResult, setUninstallResult] = useState<InstallResult | null>(null);
-  const [pathExists, setPathExists] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    const checkPath = async () => {
-      try {
-        const result = await checkVkBasaltPath();
-        setPathExists(result.exists);
-      } catch (e) {
-        await logError(`VkBasalt useEffect -> checkPath: ${String(e)}`);
-      }
-    };
-    checkPath();
-    const intervalId = setInterval(checkPath, 3000);
-    return () => clearInterval(intervalId);
-  }, []);
-
-  useEffect(() => {
-    if (installResult) {
-      const timer = setTimeout(() => setInstallResult(null), 5000);
-      return () => clearTimeout(timer);
-    }
-    return undefined;
-  }, [installResult]);
-
-  useEffect(() => {
-    if (uninstallResult) {
-      const timer = setTimeout(() => setUninstallResult(null), 5000);
-      return () => clearTimeout(timer);
-    }
-    return undefined;
-  }, [uninstallResult]);
-
-  const handleInstallClick = async () => {
-    try {
-      setInstalling(true);
-      const result = await runInstallVkBasalt();
-      setInstallResult(result);
-    } catch (e) {
-      setInstallResult({ status: "error", message: String(e) });
-      await logError(`VkBasalt Install error: ${String(e)}`);
-    } finally {
-      setInstalling(false);
-    }
-  };
-
-  const handleUninstallClick = async () => {
-    try {
-      setUninstalling(true);
-      const result = await runUninstallVkBasalt();
-      setUninstallResult(result);
-    } catch (e) {
-      setUninstallResult({ status: "error", message: String(e) });
-      await logError(`VkBasalt Uninstall error: ${String(e)}`);
-    } finally {
-      setUninstalling(false);
-    }
-  };
-
-  return (
-    <PanelSection title="VkBasalt Management">
-      {pathExists !== null && (
-        <PanelSectionRow>
-          <div style={{ color: pathExists ? "green" : "red" }}>
-            {pathExists ? "🟢 VkBasalt Is Installed" : "🔴 VkBasalt Not Installed"}
-          </div>
-        </PanelSectionRow>
-      )}
-
-      {pathExists === false && (
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={handleInstallClick} disabled={installing}>
-            {installing ? "Installing..." : "🔧 Install VkBasalt"}
-          </ButtonItem>
-        </PanelSectionRow>
-      )}
-
-      {pathExists === true && (
-        <PanelSectionRow>
-          <ButtonItem layout="below" onClick={handleUninstallClick} disabled={uninstalling}>
-            {uninstalling ? "Uninstalling..." : "🗑️ Uninstall VkBasalt"}
-          </ButtonItem>
-        </PanelSectionRow>
-      )}
-
-      {installResult && (
-        <PanelSectionRow>
-          <div style={{
-            padding: '12px',
-            marginTop: '16px',
-            backgroundColor: 'var(--decky-selected-ui-bg)',
-            borderRadius: '4px',
-            color: installResult.status === "success" ? "green" : "red"
-          }}>
-            {installResult.status === "success" ?
-              "✅ VkBasalt installed successfully!" :
-              `❌ Error: ${installResult.message || "Installation failed"}`}
-          </div>
-        </PanelSectionRow>
-      )}
-
-      {uninstallResult && (
-        <PanelSectionRow>
-          <div style={{
-            padding: '12px',
-            marginTop: '16px',
-            backgroundColor: 'var(--decky-selected-ui-bg)',
-            borderRadius: '4px',
-            color: uninstallResult.status === "success" ? "green" : "red"
-          }}>
-            {uninstallResult.status === "success" ?
-              "✅ VkBasalt uninstalled successfully!" :
-              `❌ Error: ${uninstallResult.message || "Uninstallation failed"}`}
-          </div>
-        </PanelSectionRow>
-      )}
-    </PanelSection>
-  );
-}
-
 export default definePlugin(() => ({
   name: "LetMeReShade Plugin",
   titleView: <div>LetMeReShade Manager</div>,
@@ -865,7 +736,6 @@ export default definePlugin(() => ({
   content: (
     <>
       <ReShadeInstallerSection />
-      <VkBasaltInstallerSection />
       <SteamGamesSection />
       <HeroicGamesSection />
     </>
