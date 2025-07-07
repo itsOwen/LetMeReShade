@@ -4,6 +4,8 @@
 [![License](https://img.shields.io/badge/license-BSD--3-blue.svg)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/itsOwen/LetMeReShade?style=flat-square)](https://github.com/itsOwen/LetMeReShade/releases)
 [![Steam Deck Compatibility](https://img.shields.io/badge/Steam%20Deck-Compatible-success.svg)](https://store.steampowered.com/steamdeck)
+![Downloads](https://patient-fire-5dbf.owensingh72.workers.dev/downloads)
+![Updates](https://patient-fire-5dbf.owensingh72.workers.dev/updates)
 
 > 🚀 **Ultimate Steam Deck Graphics Enhancement Suite** - Advanced shader customization with ReShade and VkBasalt support for next-level visual fidelity
 
