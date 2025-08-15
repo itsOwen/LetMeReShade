@@ -1377,10 +1377,14 @@ class Plugin:
             decky.logger.info(install_description)
             decky.logger.info(f"Environment: {install_env}")
 
+            # Create environment with required LD_LIBRARY_PATH fix for Decky v3.1.10+
+            clean_env = {**os.environ, **install_env}
+            clean_env["LD_LIBRARY_PATH"] = ""
+            
             process = subprocess.run(
                 ["/bin/bash", str(script_path)],
                 cwd=str(assets_dir),
-                env={**os.environ, **install_env},
+                env=clean_env,
                 capture_output=True,
                 text=True,
                 timeout=300
@@ -1437,10 +1441,14 @@ class Plugin:
             if not script_path.exists():
                 return {"status": "error", "message": "Uninstall script not found"}
 
+            # Create environment with required LD_LIBRARY_PATH fix for Decky v3.1.10+
+            clean_env = {**os.environ, **self.environment}
+            clean_env["LD_LIBRARY_PATH"] = ""
+            
             process = subprocess.run(
                 ["/bin/bash", str(script_path)],
                 cwd=str(assets_dir),
-                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib'},
+                env=clean_env,
                 capture_output=True,
                 text=True
             )
@@ -1523,10 +1531,14 @@ class Plugin:
             
             decky.logger.info(f"Executing command: {' '.join(cmd)}")
             
+            # Create environment with required LD_LIBRARY_PATH fix for Decky v3.1.10+
+            clean_env = {**os.environ, **self.environment}
+            clean_env["LD_LIBRARY_PATH"] = ""
+            
             process = subprocess.run(
                 cmd,
                 cwd=str(assets_dir),
-                env={**os.environ, **self.environment, 'LD_LIBRARY_PATH': '/usr/lib'},
+                env=clean_env,
                 capture_output=True,
                 text=True
             )
@@ -2155,10 +2167,15 @@ class Plugin:
                     exe_path = os.path.join(exe_dir, file)
                     try:
                         # Check if 32-bit or 64-bit using the 'file' command
+                        # Create environment with required LD_LIBRARY_PATH fix for Decky v3.1.10+
+                        clean_env = os.environ.copy()
+                        clean_env["LD_LIBRARY_PATH"] = ""
+                        
                         process = subprocess.run(
                             ["file", exe_path],
                             capture_output=True,
-                            text=True
+                            text=True,
+                            env=clean_env
                         )
                         
                         if "PE32 executable" in process.stdout and "PE32+" not in process.stdout:
@@ -2814,10 +2831,15 @@ Note: If ReShadePreset.ini already existed, your previous settings were preserve
                 
                 # Check architecture
                 try:
+                    # Create environment with required LD_LIBRARY_PATH fix for Decky v3.1.10+
+                    clean_env = os.environ.copy()
+                    clean_env["LD_LIBRARY_PATH"] = ""
+                    
                     process = subprocess.run(
                         ["file", exe_path],
                         capture_output=True,
-                        text=True
+                        text=True,
+                        env=clean_env
                     )
                     
                     if "PE32 executable" in process.stdout and "PE32+" not in process.stdout:
@@ -2857,10 +2879,15 @@ Note: If ReShadePreset.ini already existed, your previous settings were preserve
                 # If no DLLs found, try to analyze the executable for imports
                 try:
                     # Check imports using objdump (if available)
+                    # Create environment with required LD_LIBRARY_PATH fix for Decky v3.1.10+
+                    clean_env = os.environ.copy()
+                    clean_env["LD_LIBRARY_PATH"] = ""
+                    
                     process = subprocess.run(
                         ["objdump", "-p", exe_path],
                         capture_output=True,
-                        text=True
+                        text=True,
+                        env=clean_env
                     )
                     
                     output = process.stdout.lower()
