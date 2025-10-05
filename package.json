@@ -54,6 +54,21 @@
   "remote_binary_bundling": false,
   "remote_binary": [
     {
+      "name": "reshade_6.6.0.exe",
+      "url": "https://reshade.me/downloads/ReShade_Setup_6.6.0.exe",
+      "sha256hash": "5d07ee172fde0b749bd0f9ac86fce640f5e73582a5fe4624321595ef3c57ff83"
+    },
+    {
+      "name": "reshade_6.5.1.exe",
+      "url": "https://reshade.me/downloads/ReShade_Setup_6.5.1.exe",
+      "sha256hash": "c384e89427865e119db4daf18c2c225b951a4cd07dbff92b65caf68c2a95ace0"
+    },
+    {
+      "name": "reshade_6.4.1.exe",
+      "url": "https://reshade.me/downloads/ReShade_Setup_6.4.1.exe",
+      "sha256hash": "0b974b8263b4a96276b83e86736729197eaa967ca7b3014b6dbc342f25be21ef"
+    },
+    {
       "name": "reshade_latest.exe",
       "url": "https://github.com/itsOwen/LetMeReShade_Binaries/releases/download/ReShade_Version_6.5.1/reshade_latest.exe",
       "sha256hash": "c384e89427865e119db4daf18c2c225b951a4cd07dbff92b65caf68c2a95ace0"

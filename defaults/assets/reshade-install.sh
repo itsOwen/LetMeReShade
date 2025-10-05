@@ -362,6 +362,10 @@ setup_reshade() {
         else
             installer_name="reshade_last.exe"
         fi
+    elif [[ "$RESHADE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        # Version number format (e.g., 6.6.0, 6.5.1, 6.4.1)
+        version_suffix="_${RESHADE_VERSION}"
+        installer_name="reshade_${RESHADE_VERSION}.exe"
     else
         # Default to latest
         version_suffix="_latest"
