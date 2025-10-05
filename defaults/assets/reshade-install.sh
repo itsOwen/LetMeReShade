@@ -365,7 +365,12 @@ setup_reshade() {
     elif [[ "$RESHADE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         # Version number format (e.g., 6.6.0, 6.5.1, 6.4.1)
         version_suffix="_${RESHADE_VERSION}"
-        installer_name="reshade_${RESHADE_VERSION}.exe"
+        if [[ $addon_support -eq 1 ]]; then
+            installer_name="reshade_${RESHADE_VERSION}_addon.exe"
+            version_suffix="${version_suffix}_Addon"
+        else
+            installer_name="reshade_${RESHADE_VERSION}.exe"
+        fi
     else
         # Default to latest
         version_suffix="_latest"
