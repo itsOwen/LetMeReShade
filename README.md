@@ -1,3 +1,6 @@
+# 📌 This project is now being actively maintained by @Cliffback. Please follow ongoing development, updates, and contributions at:
+👉 https://github.com/Cliffback/LetMeReShade
+
 # LetMeReShade 🎮
 
 [![Decky Plugin](https://img.shields.io/badge/Decky-Plugin-brightgreen.svg)](https://github.com/SteamDeckHomebrew/decky-loader)
