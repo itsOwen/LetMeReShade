@@ -1,5 +1,4 @@
-# 📌 This project is now being actively maintained by @Cliffback. Please follow ongoing development, updates, and contributions at:
-👉 https://github.com/Cliffback/LetMeReShade
+# 📌 This project is now being actively maintained by [@Cliffback](https://github.com/Cliffback). Please follow ongoing development, updates, and contributions at: 👉 https://github.com/Cliffback/LetMeReShade
 
 # LetMeReShade 🎮
 
